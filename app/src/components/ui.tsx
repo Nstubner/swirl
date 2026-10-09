@@ -7,9 +7,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import Svg, { Circle, Defs, LinearGradient as SvgGradient, Path, Stop } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowDown, ArrowUp, Check, Minus, X } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, Award, Check, Minus, X } from 'lucide-react-native';
 import { C, F, GRAD } from '@/lib/theme';
-import { tierById, type TierId } from '@/lib/constants';
+import { BADGES, tierById, type TierId } from '@/lib/constants';
+import { useExplain } from '@/lib/explain-context';
 
 /* ---------- Swirl logo ---------- */
 
@@ -158,12 +159,13 @@ export function Segmented<T extends string>({ options, value, onChange }: { opti
 
 /* ---------- Badges + avatars ---------- */
 
-export function TierBadge({ tier, onPhoto, small }: { tier: TierId | null; onPhoto?: boolean; small?: boolean }) {
+export function TierBadge({ tier, onPhoto, small, explain = true }: { tier: TierId | null; onPhoto?: boolean; small?: boolean; explain?: boolean }) {
+  const ex = useExplain();
   // Unique gradient id per badge (duplicate SVG ids collide on web).
   const gid = `t${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   if (!tier) return null;
   const t = tierById(tier);
-  return (
+  const badge = (
     <View style={[styles.badge, { backgroundColor: onPhoto ? 'rgba(14,11,22,0.55)' : C.surface2 }]}>
       <Svg width={small ? 12 : 14} height={small ? 12 : 14} viewBox="0 0 20 20">
         <Defs>
@@ -181,6 +183,32 @@ export function TierBadge({ tier, onPhoto, small }: { tier: TierId | null; onPho
       {!small && <Text style={{ fontFamily: F.bold, fontSize: 12, color: '#fff' }}>{t.name}</Text>}
     </View>
   );
+  if (!explain) return badge;
+  return (
+    <Pressable onPress={() => ex('tier', { tier })} hitSlop={6} accessibilityRole="button" accessibilityLabel={`${t.name} tier. What does this mean?`}>
+      {badge}
+    </Pressable>
+  );
+}
+
+/** Founding Member / Swirl Founder badges. */
+export function Badges({ ids }: { ids?: string[] | null }) {
+  const ex = useExplain();
+  const list = (ids ?? []).filter((id) => BADGES[id]);
+  if (!list.length) return null;
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+      {list.map((id) => (
+        <Pressable key={id} onPress={() => ex('badge', { id })} hitSlop={6} accessibilityRole="button">
+          <LinearGradient colors={id === 'founder' ? ['#FFC93C', '#FF8A5B'] : GRAD} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+            style={[styles.badge, { paddingLeft: 7 }]}>
+            <Award size={12} color="#fff" />
+            <Text style={{ fontFamily: F.bold, fontSize: 12, color: '#fff' }}>{BADGES[id].label}</Text>
+          </LinearGradient>
+        </Pressable>
+      ))}
+    </View>
+  );
 }
 
 export function Avatar({ uri, name, size = 44 }: { uri?: string | null; name?: string | null; size?: number }) {
@@ -193,13 +221,18 @@ export function Avatar({ uri, name, size = 44 }: { uri?: string | null; name?: s
 }
 
 export function Movement({ move }: { move: number }) {
-  if (!move) return <Minus size={14} color={C.faint} />;
+  const ex = useExplain();
   const up = move > 0;
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 1 }}>
-      {up ? <ArrowUp size={13} color={C.up} strokeWidth={3} /> : <ArrowDown size={13} color={C.down} strokeWidth={3} />}
-      <Text style={{ fontFamily: F.bold, fontSize: 12, color: up ? C.up : C.down }}>{Math.abs(move)}</Text>
-    </View>
+    <Pressable onPress={() => ex('movement')} hitSlop={8} accessibilityRole="button"
+      accessibilityLabel={!move ? 'No change today' : `${up ? 'Up' : 'Down'} ${Math.abs(move)} today`}>
+      {!move ? <Minus size={14} color={C.faint} /> : (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 1 }}>
+          {up ? <ArrowUp size={13} color={C.up} strokeWidth={3} /> : <ArrowDown size={13} color={C.down} strokeWidth={3} />}
+          <Text style={{ fontFamily: F.bold, fontSize: 12, color: up ? C.up : C.down }}>{Math.abs(move)}</Text>
+        </View>
+      )}
+    </Pressable>
   );
 }
 

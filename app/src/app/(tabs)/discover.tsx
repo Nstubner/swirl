@@ -6,10 +6,14 @@ import * as Haptics from 'expo-haptics';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { interpolate, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
-import { Heart, RefreshCw, Sparkles, Star, X } from 'lucide-react-native';
+import { Heart, RefreshCw, Rocket, Sparkles, Star, X } from 'lucide-react-native';
 import { Button, EmptyState, Loading, Screen, Wordmark } from '@/components/ui';
 import { MatchScreen, ProfileCard } from '@/components/profile';
 import { useAuth } from '@/lib/auth';
+import { InfoButton } from '@/lib/explain';
+import { useExplain } from '@/lib/explain-context';
+import { useExtras } from '@/lib/extras';
+import EventBanner from '@/components/EventBanner';
 import { supabase, friendlyError } from '@/lib/supabase';
 import type { DeckPerson } from '@/lib/constants';
 import { C, F, GRAD } from '@/lib/theme';
@@ -23,7 +27,11 @@ async function fetchDeck() {
 
 export default function Discover() {
   const { profile } = useAuth();
+  const { extras, refreshExtras } = useExtras();
+  const explain = useExplain();
   const { width } = useWindowDimensions();
+  const supersLeft = extras ? extras.free_super_left + extras.bonus_supers : null;
+  const boosted = !!extras?.boost_until;
   const [deck, setDeck] = useState<DeckPerson[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -55,23 +63,34 @@ export default function Discover() {
     y.set(0);
     setBusy(false);
     const { data, error: e } = await supabase.rpc('swipe', { p_target: top.id, p_kind: dir });
-    if (e) { Alert.alert("That swipe didn't save", friendlyError(e)); return; }
+    if (dir === 'super') refreshExtras();
+    if (e) {
+      if (/Out of Super Likes/i.test(e.message)) { setDeck((d) => [top, ...d]); explain('superlike_out'); return; }
+      Alert.alert("That swipe didn't save", friendlyError(e));
+      return;
+    }
     const res = data as { matched: boolean; match_id?: string };
     if (res?.matched && res.match_id) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       setMatch({ id: res.match_id, person: top });
     }
     if (deck.length <= 3) load();
-  }, [top, deck.length, load, x, y]);
+  }, [top, deck.length, load, x, y, refreshExtras, explain]);
 
   const fling = useCallback((dir: Dir) => {
     if (!top || busy) return;
+    if (dir === 'super' && supersLeft === 0) {
+      x.set(withSpring(0));
+      y.set(withSpring(0));
+      explain('superlike_out');
+      return;
+    }
     setBusy(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     x.set(withTiming(dir === 'like' ? width * 1.4 : dir === 'pass' ? -width * 1.4 : 0, { duration: 260 }));
     y.set(withTiming(dir === 'super' ? -1100 : 40, { duration: 260 }));
     setTimeout(() => commit(dir), 270);
-  }, [top, busy, width, commit, x, y]);
+  }, [top, busy, width, commit, x, y, supersLeft, explain]);
 
   const pan = Gesture.Pan()
     .onUpdate((e) => {
@@ -142,12 +161,28 @@ export default function Discover() {
     <Screen>
       <View style={styles.header}>
         <Wordmark size={24} />
+        <View style={{ flex: 1 }} />
+        {boosted && (
+          <Pressable onPress={() => explain('boost')} style={styles.boost} accessibilityLabel="Boost active">
+            <Rocket size={14} color="#fff" />
+            <Text style={{ fontFamily: F.bold, fontSize: 12, color: '#fff' }}>Boosted</Text>
+          </Pressable>
+        )}
+        <InfoButton k="discover" />
       </View>
+      <EventBanner />
       <View style={{ flex: 1, marginHorizontal: 16, marginTop: 6 }}>{body}</View>
       {top && !profile?.paused ? (
         <View style={styles.actions}>
           <Pressable onPress={() => fling('pass')} style={[styles.round, { width: 64, height: 64 }]} accessibilityLabel="Pass"><X size={30} color={C.text} strokeWidth={2.6} /></Pressable>
-          <Pressable onPress={() => fling('super')} style={[styles.round, { width: 50, height: 50 }]} accessibilityLabel="Super like"><Star size={22} color={C.pink} fill={C.pink} /></Pressable>
+          <Pressable onPress={() => fling('super')} onLongPress={() => explain('superlike', { left: supersLeft })}
+            style={[styles.round, { width: 50, height: 50 }, supersLeft === 0 && { opacity: 0.45 }]}
+            accessibilityLabel={`Super like${supersLeft != null ? `, ${supersLeft} left` : ''}`}>
+            <Star size={22} color={C.pink} fill={C.pink} />
+            {supersLeft != null && (
+              <View style={styles.count}><Text style={{ fontFamily: F.bold, fontSize: 11, color: '#fff' }}>{supersLeft}</Text></View>
+            )}
+          </Pressable>
           <Pressable onPress={() => fling('like')} accessibilityLabel="Like" style={{ borderRadius: 40, overflow: 'hidden' }}>
             <LinearGradient colors={GRAD} style={{ width: 78, height: 78, alignItems: 'center', justifyContent: 'center' }}>
               <Heart size={34} color="#fff" fill="#fff" />
@@ -167,7 +202,9 @@ export default function Discover() {
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, height: 52 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, height: 52 },
+  boost: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.violet, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  count: { position: 'absolute', top: -4, right: -4, minWidth: 20, height: 20, borderRadius: 10, backgroundColor: C.pink, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5, borderWidth: 2, borderColor: C.bg },
   actions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 22, paddingVertical: 14 },
   round: { borderRadius: 40, backgroundColor: C.surface, borderWidth: 1, borderColor: C.line, alignItems: 'center', justifyContent: 'center' },
   stamp: { position: 'absolute', top: 36 },

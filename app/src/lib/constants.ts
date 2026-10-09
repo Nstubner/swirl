@@ -23,6 +23,14 @@ export type Profile = {
   visibility: Visibility;
   paused: boolean;
   onboarded: boolean;
+  created_at: string;
+  invite_code: string | null;
+  invites: number;
+  bonus_supers: number;
+  boost_until: string | null;
+  badges: string[];
+  banned: boolean;
+  referred_by: string | null;
 };
 
 /** A card in Discover (from the get_deck function). Tier is null for Hidden users. */
@@ -43,6 +51,7 @@ export type DeckPerson = {
   photos: string[];
   tier: TierId | null;
   super_liked_me?: boolean;
+  badges?: string[];
 };
 
 export type TierId = 'bronze' | 'silver' | 'gold' | 'platinum' | 'diamond';
@@ -186,3 +195,44 @@ export function ageFrom(birthday: string | null) {
 
 export const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
 export const signed = (n: number) => (n > 0 ? `+${fmt(n)}` : n < 0 ? `−${fmt(Math.abs(n))}` : '0');
+
+/** Points (must match supabase/schema.sql). */
+export const PTS = { like: 8, super: 20, pass: -2, reply: 10, convo: 5, date: 30, ghost: -10, convoMin: 5 } as const;
+
+/** Invite milestones (must match credit_invite in supabase/schema.sql). */
+export const INVITE_MILESTONES = [
+  { at: 1, title: '+2 Super Likes per friend', body: 'Every friend who finishes their profile gives you 2 extra Super Likes.' },
+  { at: 3, title: '24-hour Boost', body: 'Your profile shows up first in Discover for a full day.' },
+  { at: 5, title: 'Founding Member badge', body: 'A badge on your profile showing you helped start Swirl at CU.' },
+  { at: 10, title: 'Swirl Founder badge + free hoodie', body: 'The rarest badge on campus, plus a Swirl hoodie on us.' },
+] as const;
+
+export const BADGES: Record<string, { label: string; body: string }> = {
+  founding: { label: 'Founding Member', body: 'Invited 5+ friends to Swirl in its first season.' },
+  founder: { label: 'Swirl Founder', body: 'Invited 10+ friends. One of the people who built Swirl at CU.' },
+};
+
+/** Link included when people share their invite code. Set this to your TestFlight or App Store link once you have it. */
+export const APP_LINK = '';
+
+/** Data returned by get_extras(). */
+export type Extras = {
+  is_admin: boolean;
+  invite_code: string;
+  invites: number;
+  used_code: boolean;
+  can_redeem: boolean;
+  bonus_supers: number;
+  free_super_left: number;
+  boost_until: string | null;
+  badges: string[];
+  banned: boolean;
+  hoodie_claimed: boolean;
+  event: { name: string; description: string | null; multiplier: number; ends_at: string } | null;
+  next_event: { name: string; description: string | null; multiplier: number; starts_at: string } | null;
+  season: { name: string; started_at: string } | null;
+  last_season: { id: number; name: string; rank: number; total: number; score: number; tier: TierId } | null;
+};
+
+/** "Top 12%" style label. */
+export const topPct = (rank: number, total: number) => `Top ${Math.max(1, Math.ceil((rank / Math.max(1, total)) * 100))}%`;

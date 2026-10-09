@@ -5,10 +5,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ban, Flag, GraduationCap, Heart, Home, MapPin, Star } from 'lucide-react-native';
 import { C, F, GRAD } from '@/lib/theme';
 import {
-  CLASS_NAME, PROMPT_QUESTIONS, REPORT_REASONS, overlapTags, type DeckPerson, type Profile,
+  CLASS_NAME, PROMPT_QUESTIONS, PTS, REPORT_REASONS, overlapTags, type DeckPerson, type Profile,
 } from '@/lib/constants';
 import { supabase, friendlyError } from '@/lib/supabase';
-import { Avatar, Button, Chip, Sheet, SwirlGlyph, TierBadge } from './ui';
+import { Avatar, Badges, Button, Chip, Sheet, SwirlGlyph, TierBadge } from './ui';
+import { Explain } from '@/lib/explain';
 
 const classOf = (y: number | null) => (y ? `class of ’${String(y).slice(-2)}` : '');
 
@@ -35,15 +36,6 @@ export function ProfileCard({ person, me, onOpen }: { person: DeckPerson; me: Pr
             {photos.map((_, i) => <View key={i} style={[styles.bar, { backgroundColor: i === idx ? '#fff' : 'rgba(255,255,255,0.42)' }]} />)}
           </View>
         )}
-        <View style={styles.photoBadges} pointerEvents="none">
-          <TierBadge tier={person.tier} onPhoto />
-          {person.super_liked_me && (
-            <LinearGradient colors={GRAD} style={styles.superBadge}>
-              <Star size={12} color="#fff" fill="#fff" />
-              <Text style={{ fontFamily: F.bold, fontSize: 12, color: '#fff' }}>Super liked you</Text>
-            </LinearGradient>
-          )}
-        </View>
         {photos.length > 1 && (
           <View style={StyleSheet.absoluteFill} >
             <View style={{ flex: 1, flexDirection: 'row' }}>
@@ -52,6 +44,17 @@ export function ProfileCard({ person, me, onOpen }: { person: DeckPerson; me: Pr
             </View>
           </View>
         )}
+        <View style={styles.photoBadges} pointerEvents="box-none">
+          <TierBadge tier={person.tier} onPhoto />
+          {person.super_liked_me && (
+            <Explain k="super_liked_me">
+              <LinearGradient colors={GRAD} style={styles.superBadge}>
+                <Star size={12} color="#fff" fill="#fff" />
+                <Text style={{ fontFamily: F.bold, fontSize: 12, color: '#fff' }}>Super liked you</Text>
+              </LinearGradient>
+            </Explain>
+          )}
+        </View>
       </View>
       <Pressable onPress={onOpen} style={{ paddingHorizontal: 8, paddingTop: 12, paddingBottom: 6 }} accessibilityLabel={`Open ${person.name}'s full profile`}>
         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
@@ -100,12 +103,15 @@ export function ProfileView({ person, me, isMe, onReport, onBlock }: {
               {[person.major, person.grad_year ? `${CLASS_NAME[person.grad_year] ?? ''} ${classOf(person.grad_year)}` : ''].filter(Boolean).join(', ')}
             </Text>
           </View>
-          <View style={{ marginTop: 10 }}><TierBadge tier={person.tier} /></View>
+          <View style={{ marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+            <TierBadge tier={person.tier} />
+            <Badges ids={person.badges} />
+          </View>
         </View>
         {tags.length > 0 && (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          <Explain k="overlap" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
             {tags.map((t) => <View key={t} style={styles.tagDark}><Text style={styles.tagDarkText}>{t}</Text></View>)}
-          </View>
+          </Explain>
         )}
         {!!person.bio && <Text style={{ fontFamily: F.body, fontSize: 16, lineHeight: 23, color: C.text }}>{person.bio}</Text>}
         {person.prompts.map((p, i) => (
@@ -220,7 +226,7 @@ export function MatchScreen({ me, them, onMessage, onClose }: {
         </View>
         <Text style={{ fontFamily: F.display, fontSize: 46, color: C.text, marginTop: 12 }}>It's a Swirl!</Text>
         <Text style={{ fontFamily: F.body, fontSize: 16, color: C.muted, marginTop: 8 }}>You and {them.name} liked each other.</Text>
-        <Text style={{ fontFamily: F.body, fontSize: 13, color: C.faint, marginTop: 6 }}>Message within 24 hours for +5.</Text>
+        <Text style={{ fontFamily: F.body, fontSize: 13, color: C.faint, marginTop: 6 }}>Message within 24 hours for +{PTS.reply}.</Text>
       </View>
       <View style={{ gap: 10, marginTop: 40 }}>
         <Button label="Send a message" variant="white" onPress={onMessage} />

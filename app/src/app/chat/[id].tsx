@@ -7,7 +7,8 @@ import { Avatar, Button, EmptyState, Loading, MenuRow, Screen, Sheet, TierBadge 
 import { ReportSheet } from '@/components/profile';
 import { useAuth } from '@/lib/auth';
 import { supabase, friendlyError } from '@/lib/supabase';
-import { ageFrom, pickDateIdeas, type DeckPerson } from '@/lib/constants';
+import { PTS, ageFrom, pickDateIdeas, type DeckPerson } from '@/lib/constants';
+import { Explain, InfoButton } from '@/lib/explain';
 import { C, F, GRAD } from '@/lib/theme';
 
 type Msg = { id: number; match_id: string; sender_id: string; body: string; created_at: string };
@@ -119,13 +120,13 @@ export default function Chat() {
     const { data, error: e } = await supabase.rpc('confirm_date', { p_match: id });
     if (e) { Alert.alert("Couldn't save that", friendlyError(e)); return; }
     setMatch((cur) => (cur ? { ...cur, ...(cur.user_a === me ? { a_date: true } : { b_date: true }), date_paid: cur.date_paid || !!(data as { both: boolean })?.both } : cur));
-    if ((data as { both: boolean })?.both) Alert.alert('Date confirmed', `You and ${them?.name} both get +15.`);
-    else Alert.alert('Nice!', `Once ${them?.name} confirms too, you both get +15.`);
+    if ((data as { both: boolean })?.both) Alert.alert('Date confirmed', `You and ${them?.name} both get +${PTS.date}.`);
+    else Alert.alert('Nice!', `Once ${them?.name} confirms too, you both get +${PTS.date}.`);
   };
 
   const unmatch = () => {
     setMenu(false);
-    Alert.alert(`Unmatch ${them?.name}?`, iSent ? 'This removes the conversation for both of you.' : 'You never messaged them, so unmatching counts as ghosting (−5).', [
+    Alert.alert(`Unmatch ${them?.name}?`, iSent ? 'This removes the conversation for both of you.' : `You never messaged them, so unmatching counts as ghosting (${PTS.ghost}).`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Unmatch', style: 'destructive', onPress: async () => {
@@ -184,12 +185,15 @@ export default function Chat() {
     <View style={{ alignItems: 'center', paddingVertical: 20, gap: 8 }}>
       <Avatar uri={them.photos[0]} name={them.name} size={84} />
       <Text style={{ fontFamily: F.display, fontSize: 22, color: C.text }}>You matched with {them.name}</Text>
-      <Text style={{ fontFamily: F.body, fontSize: 13, color: C.muted, textAlign: 'center', paddingHorizontal: 30 }}>
-        {iSent ? 'Keep it going.' : replyOpen ? 'Send the first message within 24 hours for +5.' : 'Say hi. A good opener beats a perfect one.'}
-      </Text>
+      <Explain k="matches"><Text style={{ fontFamily: F.body, fontSize: 13, color: C.muted, textAlign: 'center', paddingHorizontal: 30 }}>
+        {iSent ? 'Keep it going.' : replyOpen ? `Send the first message within 24 hours for +${PTS.reply}.` : 'Say hi. A good opener beats a perfect one.'}
+      </Text></Explain>
       {msgs.length < 6 && (
         <View style={{ alignSelf: 'stretch', marginTop: 10, gap: 8 }}>
-          <Text style={{ fontFamily: F.bold, fontSize: 13, color: C.muted, paddingHorizontal: 4 }}>Date ideas for you two</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4 }}>
+            <Text style={{ fontFamily: F.bold, fontSize: 13, color: C.muted, flex: 1 }}>Date ideas for you two</Text>
+            <InfoButton k="date_ideas" size={15} />
+          </View>
           {dateIdeas.map((s) => (
             <Pressable key={s.id} onPress={() => setText(`Want to check out ${s.name} sometime?`)} style={styles.idea}>
               <MapPin size={16} color={C.pink} />
@@ -211,14 +215,14 @@ export default function Chat() {
     <Screen edges={['top', 'bottom']}>
       {header}
       {match.date_paid ? (
-        <LinearGradient colors={GRAD} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.banner}>
+        <Explain k="date"><LinearGradient colors={GRAD} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.banner}>
           <CalendarHeart size={16} color="#fff" />
-          <Text style={styles.bannerText}>You both confirmed a date. +15 each.</Text>
-        </LinearGradient>
+          <Text style={styles.bannerText}>You both confirmed a date. +{PTS.date} each.</Text>
+        </LinearGradient></Explain>
       ) : theirDate && !myDate ? (
         <Pressable onPress={confirmDate} style={[styles.banner, { backgroundColor: C.surface2 }]}>
           <CalendarHeart size={16} color={C.pink} />
-          <Text style={styles.bannerText}>{them.name} says you went on a date. Tap to confirm for +15.</Text>
+          <Text style={styles.bannerText}>{them.name} says you went on a date. Tap to confirm for +{PTS.date}.</Text>
         </Pressable>
       ) : null}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
@@ -272,10 +276,10 @@ export default function Chat() {
         <MenuRow
           icon={<CalendarHeart size={18} color={C.text} />}
           label={match.date_paid ? 'Date confirmed' : myDate ? `Waiting for ${them.name} to confirm` : 'We went on a date'}
-          sub={match.date_paid ? 'You both got +15.' : 'When you both confirm, you each get +15.'}
+          sub={match.date_paid ? `You both got +${PTS.date}.` : `When you both confirm, you each get +${PTS.date}.`}
           onPress={match.date_paid || myDate ? undefined : confirmDate}
         />
-        <MenuRow icon={<HeartCrack size={18} color={C.text} />} label="Unmatch" sub={iSent ? undefined : 'You haven’t messaged them yet (−5)'} onPress={unmatch} />
+        <MenuRow icon={<HeartCrack size={18} color={C.text} />} label="Unmatch" sub={iSent ? undefined : `You haven’t messaged them yet (${PTS.ghost})`} onPress={unmatch} />
         <MenuRow icon={<Flag size={18} color={C.down} />} label="Report" danger onPress={() => { setMenu(false); setReporting(true); }} />
         <MenuRow icon={<Ban size={18} color={C.down} />} label="Block" danger onPress={block} />
       </Sheet>

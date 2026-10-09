@@ -17,6 +17,19 @@ A college dating app with a live, like-based campus leaderboard. Launching at CU
 
 Never put the database password or the `service_role` / secret key in this repo or the app. The app only uses the public publishable key in `app/.env`.
 
+## Make yourself an admin
+
+After you've signed up in the app, run this once in the SQL Editor (use the email you signed in with):
+
+```sql
+insert into public.admins (user_id)
+select id from auth.users where email = 'you@colorado.edu';
+```
+
+Then reopen the app → Profile → **Admin dashboard** (signups, activity, retention, matches, reports, bans, hoodie claims, events and seasons).
+
+To download raw data as a spreadsheet: Supabase → Table Editor → pick a table → Export → CSV.
+
 ## Run it on your phone
 
 ```bash
@@ -37,8 +50,10 @@ npx expo lint      # lint
 
 ## How scoring works
 
-Everyone starts at 1,000 (floor 500). Like received +10, Super Like +25, each weighted by the liker's score vs. yours (0.5×–2×). Pass −3. First message within 24h of matching +5. Both confirm a date +15 each. Unmatching someone you never messaged −5. Tiers: Bronze < 900, Silver 900, Gold 1,100, Platinum 1,300, Diamond 1,500.
+Everyone starts each season at 1,000 (floor 500). Like received +8, Super Like +20, each weighted by the liker's score vs. yours (0.5×–2×), halved if the liker likes more than 80% of people, multiplied during events. Pass −2. First message within 24h of matching +10. Both send 5+ messages +5 each. Both confirm a date +30 each. Unmatching someone you never messaged −10. Tiers: Bronze < 900, Silver 900, Gold 1,100, Platinum 1,300, Diamond 1,500. Super Likes: 1 free per day plus earned ones.
+
+Invites: each friend who finishes their profile = +2 Super Likes; 3 = 24h Boost; 5 = Founding Member badge; 10 = Swirl Founder badge + hoodie claim.
 
 ## Not built yet
 
-Push notifications, Swirl Night events, group mode, rivalries, weekly recap, discovery filters, an App Review demo account, and an admin view for reports.
+Push notifications, group mode, rivalries, weekly recap, discovery filters, privacy policy/terms pages, and an App Review demo account.

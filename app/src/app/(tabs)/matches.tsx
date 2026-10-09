@@ -5,7 +5,8 @@ import { Heart } from 'lucide-react-native';
 import { Avatar, Button, EmptyState, Loading, Screen } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
 import { supabase, friendlyError } from '@/lib/supabase';
-import type { TierId } from '@/lib/constants';
+import { PTS, type TierId } from '@/lib/constants';
+import { Explain, InfoButton } from '@/lib/explain';
 import { C, F } from '@/lib/theme';
 
 export type MatchRow = {
@@ -51,7 +52,10 @@ export default function Matches() {
 
   return (
     <Screen>
-      <Text style={{ fontFamily: F.display, fontSize: 30, color: C.text, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 }}>Matches</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 }}>
+        <Text style={{ fontFamily: F.display, fontSize: 30, color: C.text, flex: 1 }}>Matches</Text>
+        <InfoButton k="matches" />
+      </View>
       {error ? <EmptyState title="Couldn't load matches" body={error} action={<Button label="Try again" onPress={load} />} /> :
         !rows?.length ? (
           <EmptyState icon={<Heart size={28} color={C.text} />} title="No matches yet" body="When you and someone both swipe right, they show up here."
@@ -74,7 +78,7 @@ export default function Matches() {
                 {convos.length > 0 && <Text style={[styles.section, { marginTop: 18 }]}>Messages</Text>}
               </View>
             ) : <Text style={styles.section}>Messages</Text>}
-            ListEmptyComponent={<Text style={{ fontFamily: F.body, color: C.muted, paddingHorizontal: 20 }}>Say hi to your new matches. Replying within 24 hours earns +5.</Text>}
+            ListEmptyComponent={<Text style={{ fontFamily: F.body, color: C.muted, paddingHorizontal: 20 }}>Say hi to your new matches. Messaging within 24 hours earns +{PTS.reply}.</Text>}
             renderItem={({ item: r }) => {
               const yourTurn = r.last_sender && r.last_sender !== me;
               return (
@@ -89,7 +93,7 @@ export default function Matches() {
                       <Text style={[styles.preview, yourTurn && { color: C.text, fontFamily: F.semibold }]} numberOfLines={1}>
                         {r.last_sender === me ? 'You: ' : ''}{r.last_body}
                       </Text>
-                      {yourTurn && <Text style={styles.turn}>Your turn</Text>}
+                      {yourTurn && <Explain k="your_turn"><Text style={styles.turn}>Your turn</Text></Explain>}
                     </View>
                   </View>
                 </Pressable>

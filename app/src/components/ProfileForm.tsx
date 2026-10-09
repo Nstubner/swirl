@@ -6,7 +6,7 @@ import { Button, Chip, H1, Input, Label, P, Screen } from './ui';
 import { C, F } from '@/lib/theme';
 import { useAuth } from '@/lib/auth';
 import { pickAndUploadPhoto, deletePhoto } from '@/lib/photos';
-import { friendlyError } from '@/lib/supabase';
+import { friendlyError, supabase } from '@/lib/supabase';
 import {
   CAMPUS_SPOTS, CLASS_NAME, COURSES, DORMS, GENDERS, GRAD_YEARS, INTERESTS, MAJORS, PROMPT_QUESTIONS, PRONOUNS,
   SHOW_ME, VISIBILITY, ageFrom, type Profile,
@@ -67,6 +67,8 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [majorQuery, setMajorQuery] = useState('');
+  const [invite, setInvite] = useState('');
+  const [inviteDone, setInviteDone] = useState(false);
   const scroll = useRef<ScrollView>(null);
   const set = (patch: Partial<Draft>) => { setD((x) => ({ ...x, ...patch })); setError(''); };
 
@@ -92,6 +94,14 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
   const save = async (final: boolean) => {
     setBusy(true);
     try {
+      // Apply a friend's invite code before finishing, so they get credit when onboarding completes.
+      if (final && invite.trim() && !inviteDone) {
+        const { data, error: e } = await supabase.rpc('redeem_invite', { p_code: invite.trim() });
+        if (e) throw e;
+        const r = data as { ok: boolean; error?: string };
+        if (!r.ok) { setError(`${r.error ?? 'That invite code didn’t work.'} Fix it or clear the box to skip.`); return; }
+        setInviteDone(true);
+      }
       await updateProfile({
         ...d, name: d.name?.trim() ?? null, bio: d.bio?.trim() ?? null, birthday: birthdayIso(),
         prompts: d.prompts.map((p) => ({ q: p.q, a: p.a.trim() })),
@@ -271,6 +281,14 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
               <Text style={{ fontFamily: F.body, fontSize: 14, color: C.muted, marginTop: 4 }}>{v.body}</Text>
             </Pressable>
           ))}
+          {mode === 'onboarding' && (
+            <View style={{ marginTop: 14 }}>
+              <Label>Got an invite code? (optional)</Label>
+              <Input value={invite} onChangeText={(t) => { setInvite(t.toUpperCase()); setInviteDone(false); setError(''); }}
+                placeholder="ABC123" autoCapitalize="characters" maxLength={6} />
+              <Text style={{ fontFamily: F.body, fontSize: 12, color: C.muted, marginTop: 6 }}>Your friend gets credit and you get a bonus Super Like.</Text>
+            </View>
+          )}
         </View>
       ),
     },
