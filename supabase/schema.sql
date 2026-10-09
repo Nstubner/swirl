@@ -250,6 +250,18 @@ language sql stable security definer set search_path = public as $$
   limit p_limit
 $$;
 
+-- One person's profile card (for chat headers and "view profile"). Tier only, never the exact score.
+create or replace function public.get_person(p_id uuid)
+returns table (id uuid, name text, age int, gender text, pronouns text, major text, grad_year int, bio text,
+               prompts jsonb, interests text[], classes text[], dorm text, spots text[], photos text[], tier text)
+language sql stable security definer set search_path = public as $$
+  select p.id, p.name, date_part('year', age(p.birthday))::int, p.gender, p.pronouns, p.major, p.grad_year, p.bio,
+         p.prompts, p.interests, p.classes, p.dorm, p.spots, p.photos,
+         case when p.visibility = 'hidden' and p.id <> auth.uid() then null else tier_for(coalesce(s.score, 1000)) end
+  from profiles p left join scores s on s.user_id = p.id
+  where p.id = p_id and (p.id = auth.uid() or (p.onboarded and not is_blocked(auth.uid(), p.id)))
+$$;
+
 -- ---------- Swiping + scoring -------------------------------------------------
 
 -- Like +10, Super Like +25, each weighted by swiper score / receiver score (clamped 0.5–2).
@@ -457,5 +469,5 @@ exception when duplicate_object then null; end $$;
 
 grant execute on function public.get_deck(int), public.swipe(uuid, text), public.confirm_date(uuid),
   public.unmatch(uuid), public.block_user(uuid), public.delete_my_account(),
-  public.get_leaderboard(text, int), public.get_my_score(), public.get_matches() to authenticated;
+  public.get_leaderboard(text, int), public.get_my_score(), public.get_matches(), public.get_person(uuid) to authenticated;
 revoke execute on function public.apply_score(uuid, int, text, uuid) from public, anon, authenticated;
