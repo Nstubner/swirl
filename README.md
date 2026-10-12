@@ -57,3 +57,5 @@ Invites: each friend who finishes their profile = +2 Super Likes; 3 = 24h Boost;
 ## Not built yet
 
 Push notifications, group mode, rivalries, weekly recap, discovery filters, privacy policy/terms pages, and an App Review demo account.
+
+Planned anti-cheat for team boards: likes from teammates don't count toward dorm/house scores, dorm changes limited to once per season, minimum 5 members per dorm. Possible Greek houses board (opt-in, scored mostly on conversations and dates).
