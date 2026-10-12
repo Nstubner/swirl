@@ -198,6 +198,12 @@ alter table public.profiles add column if not exists verification_photo  text;
 alter table public.profiles add column if not exists verification_pose   text;
 alter table public.profiles add column if not exists dorm_changed_at     timestamptz;
 alter table public.profiles add column if not exists greek_changed_at    timestamptz;
+alter table public.profiles add column if not exists photo_locations     text[] not null default '{}';
+alter table public.profiles add column if not exists birthday_changed_at timestamptz;
+alter table public.profiles drop constraint if exists profiles_major_len;
+alter table public.profiles add constraint profiles_major_len check (char_length(major) <= 40);
+alter table public.profiles drop constraint if exists profiles_classes_len;
+alter table public.profiles add constraint profiles_classes_len check (coalesce(array_length(classes, 1), 0) <= 8);
 alter table public.profiles drop constraint if exists profiles_looking_for_check;
 alter table public.profiles add constraint profiles_looking_for_check
   check (looking_for is null or looking_for in ('serious','casual','unsure','friends'));
@@ -377,6 +383,14 @@ begin
     new.verified := old.verified;           new.verification_status := old.verification_status;
     new.verification_photo := old.verification_photo;  new.verification_pose := old.verification_pose;
     new.dorm_changed_at := old.dorm_changed_at;         new.greek_changed_at := old.greek_changed_at;
+    new.birthday_changed_at := old.birthday_changed_at;
+    -- Birthday: free to set the first time; after that one change, then once every 6 months.
+    if old.birthday is not null and new.birthday is distinct from old.birthday then
+      if old.birthday_changed_at > now() - interval '6 months' then
+        raise exception 'You can change your birthday once every 6 months';
+      end if;
+      new.birthday_changed_at := now();
+    end if;
     -- Dorm and Greek chapter can each change once per season after you've finished your profile.
     if old.onboarded and new.dorm is distinct from old.dorm and old.dorm is not null then
       if old.dorm_changed_at >= season_start() then
@@ -395,6 +409,9 @@ begin
   perform check_text(new.bio);
   perform check_text(new.prompts::text);
   perform check_text(array_to_string(new.captions, ' '));
+  perform check_text(new.major);
+  perform check_text(array_to_string(new.classes, ' '));
+  perform check_text(array_to_string(new.photo_locations, ' '));
   return new;
 end $$;
 
@@ -524,14 +541,14 @@ create function public.get_deck(p_limit int default 30)
 returns table (id uuid, name text, age int, gender text, pronouns text, major text, grad_year int, bio text,
                prompts jsonb, interests text[], classes text[], dorm text, spots text[], photos text[],
                tier text, super_liked_me boolean, badges text[], captions text[], looking_for text, greek text,
-               verified boolean, liked_me_item text, liked_me_comment text)
+               verified boolean, liked_me_item text, liked_me_comment text, photo_locations text[])
 language sql stable security definer set search_path = public as $$
   with me as (select * from profiles where id = auth.uid())
   select p.id, p.name, date_part('year', age(p.birthday))::int, p.gender, p.pronouns, p.major, p.grad_year, p.bio,
          p.prompts, p.interests, p.classes, p.dorm, p.spots, p.photos,
          case when p.visibility = 'hidden' then null else tier_for(coalesce(s.score, 1000)) end,
          coalesce(x.kind = 'super', false), p.badges, p.captions, p.looking_for, p.greek, p.verified,
-         x.item, x.comment
+         x.item, x.comment, p.photo_locations
   from profiles p
   cross join me
   left join scores s on s.user_id = p.id
@@ -557,7 +574,8 @@ create function public.get_person(p_id uuid)
 returns table (id uuid, name text, age int, gender text, pronouns text, major text, grad_year int, bio text,
                prompts jsonb, interests text[], classes text[], dorm text, spots text[], photos text[], tier text,
                badges text[], captions text[], looking_for text, greek text, verified boolean,
-               liked_me_item text, liked_me_comment text, super_liked_me boolean, i_swiped boolean, liked_me boolean)
+               liked_me_item text, liked_me_comment text, super_liked_me boolean, i_swiped boolean, liked_me boolean,
+               photo_locations text[])
 language sql stable security definer set search_path = public as $$
   select p.id, p.name, date_part('year', age(p.birthday))::int, p.gender, p.pronouns, p.major, p.grad_year, p.bio,
          p.prompts, p.interests, p.classes, p.dorm, p.spots, p.photos,
@@ -565,7 +583,7 @@ language sql stable security definer set search_path = public as $$
          p.badges, p.captions, p.looking_for, p.greek, p.verified,
          x.item, x.comment, coalesce(x.kind = 'super', false),
          exists (select 1 from swipes w where w.swiper_id = auth.uid() and w.target_id = p.id),
-         x.swiper_id is not null
+         x.swiper_id is not null, p.photo_locations
   from profiles p left join scores s on s.user_id = p.id
   left join swipes x on x.swiper_id = p.id and x.target_id = auth.uid() and x.kind in ('like','super')
   where p.id = p_id and (p.id = auth.uid() or (p.onboarded and not p.banned and not is_blocked(auth.uid(), p.id)))
