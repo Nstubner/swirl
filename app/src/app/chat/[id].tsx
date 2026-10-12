@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ban, CalendarHeart, ChevronLeft, Dices, Flag, Heart, HeartCrack, Lightbulb, MapPin, MoreHorizontal, Send, User } from 'lucide-react-native';
@@ -7,13 +7,14 @@ import { Avatar, Button, EmptyState, Loading, MenuRow, Screen, Sheet, TierBadge,
 import { useExplain } from '@/lib/explain-context';
 import { ReportSheet } from '@/components/profile';
 import { useAuth } from '@/lib/auth';
+import { useExtras } from '@/lib/extras';
 import { supabase, friendlyError } from '@/lib/supabase';
 import { ICEBREAKERS, PTS, ageFrom, pickDateIdeas, type DeckPerson } from '@/lib/constants';
 import { Explain, InfoButton } from '@/lib/explain';
 import { C, F, GRAD } from '@/lib/theme';
 
 type Msg = { id: number; match_id: string; sender_id: string; body: string; created_at: string; kind?: 'text' | 'like_comment' };
-type MatchRec = { id: string; user_a: string; user_b: string; created_at: string; a_date: boolean; b_date: boolean; date_paid: boolean };
+type MatchRec = { id: string; user_a: string; user_b: string; created_at: string; a_date: boolean; b_date: boolean; date_paid: boolean; a_read_at?: string | null; b_read_at?: string | null };
 
 type ChatData =
   | { kind: 'ok'; match: MatchRec; them: DeckPerson; msgs: Msg[]; replyOpen: boolean }
@@ -22,7 +23,7 @@ type ChatData =
 
 async function fetchChat(id: string | undefined, me: string): Promise<ChatData> {
   if (!id) return { kind: 'gone' };
-  const { data: m, error: e1 } = await supabase.from('matches').select('id,user_a,user_b,created_at,a_date,b_date,date_paid').eq('id', id).maybeSingle();
+  const { data: m, error: e1 } = await supabase.from('matches').select('id,user_a,user_b,created_at,a_date,b_date,date_paid,a_read_at,b_read_at').eq('id', id).maybeSingle();
   if (e1) return { kind: 'error', error: friendlyError(e1) };
   if (!m) return { kind: 'gone' };
   const otherId = m.user_a === me ? m.user_b : m.user_a;
@@ -63,6 +64,11 @@ export default function Chat() {
   const [ideas, setIdeas] = useState(false);
   const [reporting, setReporting] = useState(false);
   const [replyOpen, setReplyOpen] = useState(false);
+  const [typing, setTyping] = useState(false);
+  const { refreshExtras } = useExtras();
+  const channel = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const lastTypingSent = useRef(0);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const apply = useCallback((r: ChatData) => {
     if (r.kind === 'error') { setError(r.error); setState('error'); return; }
@@ -78,6 +84,14 @@ export default function Chat() {
 
   useEffect(() => { fetchChat(id, me).then(apply); }, [id, me, apply]);
 
+  // Mark the chat read when it opens and whenever they send something while it's open.
+  const markRead = useCallback(() => {
+    if (!id) return;
+    supabase.rpc('mark_read', { p_match: id }).then(() => refreshExtras(), () => {});
+  }, [id, refreshExtras]);
+  const theirCount = msgs.filter((m) => m.sender_id !== me).length;
+  useEffect(() => { if (state === 'ready') markRead(); }, [state, theirCount, markRead]);
+
   // Live updates: new messages and date confirmations.
   useEffect(() => {
     if (!id) return;
@@ -85,13 +99,35 @@ export default function Chat() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `match_id=eq.${id}` }, (payload) => {
         const m = payload.new as Msg;
         setMsgs((cur) => (cur.some((x) => x.id === m.id) ? cur : [...cur, m]));
+        if (m.sender_id !== me) setTyping(false);
+      })
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        if ((payload as { user?: string })?.user === me) return;
+        setTyping(true);
+        if (typingTimer.current) clearTimeout(typingTimer.current);
+        typingTimer.current = setTimeout(() => setTyping(false), 4000);
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'matches', filter: `id=eq.${id}` }, (payload) => {
         setMatch((cur) => (cur ? { ...cur, ...(payload.new as Partial<MatchRec>) } : cur));
       })
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [id]);
+    channel.current = ch;
+    return () => {
+      channel.current = null;
+      if (typingTimer.current) clearTimeout(typingTimer.current);
+      supabase.removeChannel(ch);
+    };
+  }, [id, me]);
+
+  // Tell them you're typing, at most every 2.5 seconds.
+  const onType = (t: string) => {
+    setText(t);
+    const now = Date.now();
+    if (t.trim() && now - lastTypingSent.current > 2500) {
+      lastTypingSent.current = now;
+      channel.current?.send({ type: 'broadcast', event: 'typing', payload: { user: me } }).catch(() => {});
+    }
+  };
 
   const iSent = msgs.some((m) => m.sender_id === me);
   const myDate = match ? (match.user_a === me ? match.a_date : match.b_date) : false;
@@ -215,6 +251,10 @@ export default function Chat() {
   );
 
   const reversed = [...msgs].reverse();
+  // "Seen" shows under your latest message once they've opened the chat after it was sent.
+  const theirReadAt = match.user_a === me ? match.b_read_at : match.a_read_at;
+  const lastMine = reversed.find((m) => m.sender_id === me);
+  const seenId = lastMine && reversed[0]?.id === lastMine.id && theirReadAt && new Date(theirReadAt) >= new Date(lastMine.created_at) ? lastMine.id : null;
 
   return (
     <Screen edges={['top', 'bottom']}>
@@ -238,6 +278,13 @@ export default function Chat() {
           ListFooterComponent={intro}
           contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 10 }}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          onScrollBeginDrag={Platform.OS === 'android' ? Keyboard.dismiss : undefined}
+          ListHeaderComponent={typing ? (
+            <View style={[styles.bubble, { backgroundColor: C.surface2, borderBottomLeftRadius: 6, alignSelf: 'flex-start', marginTop: 4 }]}>
+              <Text style={[styles.bubbleText, { color: C.muted }]}>{them.name} is typing…</Text>
+            </View>
+          ) : null}
           renderItem={({ item, index }) => {
             const mine = item.sender_id === me;
             const older = reversed[index + 1];
@@ -261,6 +308,7 @@ export default function Chat() {
                       <Text style={styles.bubbleText}>{item.body}</Text>
                     </View>
                   )}
+                  {item.id === seenId && <Text style={styles.seen}>Seen</Text>}
                 </View>
               </View>
             );
@@ -273,7 +321,7 @@ export default function Chat() {
           </Pressable>
           <TextInput
             value={text}
-            onChangeText={setText}
+            onChangeText={onType}
             placeholder={`Message ${them.name}`}
             placeholderTextColor={C.faint}
             multiline
@@ -330,6 +378,7 @@ const styles = StyleSheet.create({
   headBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   banner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10 },
   bannerText: { fontFamily: F.semibold, fontSize: 13, color: '#fff', flex: 1 },
+  seen: { fontFamily: F.medium, fontSize: 11, color: C.faint, marginTop: 3, marginRight: 6 },
   stamp: { fontFamily: F.medium, fontSize: 11, color: C.faint, textAlign: 'center', marginVertical: 10 },
   bubble: { maxWidth: '78%', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9 },
   bubbleText: { fontFamily: F.body, fontSize: 16, lineHeight: 21, color: C.text },

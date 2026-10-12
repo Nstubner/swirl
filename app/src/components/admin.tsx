@@ -79,9 +79,10 @@ type Stats = {
   referred: number; top_inviters: { name: string | null; email: string; invites: number }[];
   reports_open: number; claims_open: number;
   verifications_pending: number; verified: number; push_users: number; looking_for: Record<string, number>; like_comments: number;
+  errors_today?: number; feedback_new?: number;
 };
 
-export function Overview({ onJump }: { onJump: (tab: 'reports' | 'rewards' | 'verify') => void }) {
+export function Overview({ onJump }: { onJump: (tab: 'reports' | 'rewards' | 'verify' | 'support') => void }) {
   const { width } = useWindowDimensions();
   const [st, setSt] = useState<Stats | null>(null);
   const [error, setError] = useState('');
@@ -164,6 +165,16 @@ export function Overview({ onJump }: { onJump: (tab: 'reports' | 'rewards' | 've
         <View style={s.grid}>
           <Tile label="Verified" value={fmt(st.verified)} sub={`${pct(st.verified, st.onboarded)} of profiles`} />
           <Tile label="Notifications on" value={fmt(st.push_users)} sub={`${pct(st.push_users, st.onboarded)} of profiles`} />
+          <Pressable style={s.tile} onPress={() => onJump('support')}>
+            <Text style={s.tileLabel}>Support messages</Text>
+            <Text style={s.tileValue}>{fmt(st.feedback_new ?? 0)}</Text>
+            <Text style={s.tileSub}>new · tap to open</Text>
+          </Pressable>
+          <Pressable style={s.tile} onPress={() => onJump('support')}>
+            <Text style={s.tileLabel}>App errors today</Text>
+            <Text style={s.tileValue}>{fmt(st.errors_today ?? 0)}</Text>
+            <Text style={s.tileSub}>tap to see details</Text>
+          </Pressable>
         </View>
         <Text style={[s.small, { marginTop: 14 }]}>Looking for</Text>
         {LOOKING_FOR.map((l) => (
@@ -415,6 +426,62 @@ export function Rewards() {
           </View>
         </View>
       )} />
+  );
+}
+
+/* ---------- Support: messages from Help & support, plus crash reports ---------- */
+
+type Feedback = { id: number; created_at: string; body: string; contact: string | null; status: 'new' | 'done'; user_name: string | null; user_email: string | null };
+type AppError = { id: number; created_at: string; message: string; stack: string | null; screen: string | null; platform: string | null; app_version: string | null; user_name: string | null };
+
+async function fetchSupport() {
+  const [f, e] = await Promise.all([supabase.rpc('admin_feedback', { p_limit: 100 }), supabase.rpc('admin_errors', { p_limit: 100 })]);
+  return { feedback: (f.data ?? []) as Feedback[], errors: (e.data ?? []) as AppError[], error: f.error || e.error ? friendlyError(f.error ?? e.error) : '' };
+}
+
+export function Support() {
+  const [view, setView] = useState<'messages' | 'errors'>('messages');
+  const [data, setData] = useState<Awaited<ReturnType<typeof fetchSupport>> | null>(null);
+  const [openErr, setOpenErr] = useState<number | null>(null);
+  const load = useCallback(() => fetchSupport().then(setData), []);
+  useEffect(() => { fetchSupport().then(setData); }, []);
+  const mark = async (f: Feedback) => {
+    const { error } = await supabase.rpc('admin_feedback_done', { p_id: f.id, p_done: f.status === 'new' });
+    if (error) Alert.alert('Error', friendlyError(error)); else load();
+  };
+  if (!data) return <Loading />;
+  const when = (iso: string) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return (
+    <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 60 }} refreshControl={<RefreshControl refreshing={false} onRefresh={load} tintColor={C.muted} />}>
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <Chip small label={`Messages (${data.feedback.filter((f) => f.status === 'new').length} new)`} selected={view === 'messages'} onPress={() => setView('messages')} />
+        <Chip small label={`App errors (${data.errors.length})`} selected={view === 'errors'} onPress={() => setView('errors')} />
+      </View>
+      {!!data.error && <Text style={[s.small, { color: C.down }]}>{data.error}. Run the latest schema.sql in Supabase.</Text>}
+      {view === 'messages' ? (
+        data.feedback.length === 0 ? <EmptyState title="No messages yet" body="Messages people send from Profile → Help & support show up here, and you get a push." /> :
+        data.feedback.map((f) => (
+          <View key={f.id} style={[s.card, f.status === 'done' && { opacity: 0.55 }]}>
+            <Text style={s.small}>{f.user_name ?? 'Deleted user'}{f.user_email ? ` · ${f.user_email}` : ''} · {when(f.created_at)}</Text>
+            <Text style={{ fontFamily: F.body, fontSize: 15, lineHeight: 21, color: C.text, marginTop: 6 }}>{f.body}</Text>
+            {!!f.contact && <Text style={[s.small, { marginTop: 6 }]}>Contact: {f.contact}</Text>}
+            <View style={{ flexDirection: 'row', marginTop: 10 }}>
+              <Button small variant={f.status === 'new' ? 'primary' : 'secondary'} label={f.status === 'new' ? 'Mark done' : 'Reopen'}
+                icon={f.status === 'new' ? <Check size={14} color={C.text} /> : <Undo2 size={14} color={C.text} />} onPress={() => mark(f)} />
+            </View>
+          </View>
+        ))
+      ) : (
+        data.errors.length === 0 ? <EmptyState title="No errors" body="When the app crashes or hits an error, the details show up here so you can send them to whoever is fixing it." /> :
+        data.errors.map((e) => (
+          <Pressable key={e.id} style={s.card} onPress={() => setOpenErr(openErr === e.id ? null : e.id)}>
+            <Text style={s.small}>{when(e.created_at)} · {e.platform ?? '?'} {e.app_version ?? ''} · {e.screen || 'unknown screen'}{e.user_name ? ` · ${e.user_name}` : ''}</Text>
+            <Text style={{ fontFamily: F.semibold, fontSize: 14, color: C.text, marginTop: 4 }} numberOfLines={openErr === e.id ? undefined : 2}>{e.message}</Text>
+            {openErr === e.id && !!e.stack && <Text style={[s.small, { marginTop: 8, fontSize: 11 }]} selectable>{e.stack}</Text>}
+          </Pressable>
+        ))
+      )}
+    </ScrollView>
   );
 }
 

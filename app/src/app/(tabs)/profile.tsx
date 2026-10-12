@@ -3,7 +3,7 @@ import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text,
 import { router, useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Defs, Path, Stop, LinearGradient as SvgGradient } from 'react-native-svg';
-import { BadgeCheck, BarChart3, Bell, Calculator, ChevronRight, Eye, Gift, LogOut, Pause, Pencil, Share2, ShieldCheck, Trash2, Trophy } from 'lucide-react-native';
+import { BadgeCheck, BarChart3, Bell, Calculator, ChevronRight, Eye, FileText, Gift, LifeBuoy, LogOut, Pause, Pencil, Share2, ShieldCheck, Trash2, Trophy } from 'lucide-react-native';
 import { Avatar, Badges, Button, Chip, Loading, MenuRow, Screen, Sheet, TierBadge, VerifiedCheck } from '@/components/ui';
 import { ShareSheet, type Recap, type ShareContent } from '@/components/ShareCard';
 import { Explain, InfoButton } from '@/lib/explain';
@@ -317,6 +317,8 @@ export default function ProfileTab() {
           <MenuRow icon={<Gift size={18} color={C.text} />} label="Invite friends" sub="Earn Super Likes, a Boost, badges and a hoodie" onPress={() => router.push('/invite')} />
           <MenuRow icon={<Calculator size={18} color={C.text} />} label="How scoring works" onPress={() => explain('scoring')} />
           <MenuRow icon={<ShieldCheck size={18} color={C.text} />} label="Safety tips" onPress={() => setSafety(true)} />
+          <MenuRow icon={<LifeBuoy size={18} color={C.text} />} label="Help & support" sub="Quick answers or message the Swirl team" onPress={() => router.push('/help')} />
+          <MenuRow icon={<FileText size={18} color={C.text} />} label="Privacy Policy" onPress={() => router.push('/legal/privacy')} />
           <MenuRow icon={<LogOut size={18} color={C.text} />} label="Log out" onPress={() => signOut()} />
           <MenuRow icon={<Trash2 size={18} color={C.down} />} label="Delete account" danger onPress={confirmDelete} />
         </View>

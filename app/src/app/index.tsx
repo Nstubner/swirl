@@ -19,6 +19,13 @@ export default function Welcome() {
         <Text style={{ fontFamily: F.body, fontSize: 12, color: C.faint, textAlign: 'center', marginTop: 4 }}>
           For college students 18 and up. You'll need a .edu email.
         </Text>
+        <Text style={{ fontFamily: F.body, fontSize: 12, color: C.faint, textAlign: 'center' }}>
+          <Text style={{ textDecorationLine: 'underline' }} onPress={() => router.push('/legal/terms')}>Terms</Text>
+          {'  ·  '}
+          <Text style={{ textDecorationLine: 'underline' }} onPress={() => router.push('/legal/privacy')}>Privacy</Text>
+          {'  ·  '}
+          <Text style={{ textDecorationLine: 'underline' }} onPress={() => router.push('/legal/guidelines')}>Guidelines</Text>
+        </Text>
       </View>
     </Screen>
   );

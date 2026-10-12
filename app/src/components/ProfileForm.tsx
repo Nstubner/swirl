@@ -1,19 +1,21 @@
 import { useMemo, useRef, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { Image } from 'expo-image';
-import { ChevronLeft, Plus, X } from 'lucide-react-native';
-import { Button, Chip, H1, Input, Label, P, Screen } from './ui';
+import { router } from 'expo-router';
+import { Check, ChevronLeft, MapPin, Plus, X } from 'lucide-react-native';
+import { Button, Chip, H1, Input, Label, P, Screen, Sheet } from './ui';
 import { C, F } from '@/lib/theme';
 import { useAuth } from '@/lib/auth';
+import { PENDING_INVITE, store } from '@/lib/extras';
 import { pickAndUploadPhoto, deletePhoto } from '@/lib/photos';
 import { friendlyError, supabase } from '@/lib/supabase';
 import {
   CAMPUS_SPOTS, CLASS_NAME, COURSES, DORMS, GENDERS, GRAD_YEARS, INTERESTS, MAJORS, PROMPT_QUESTIONS, PRONOUNS,
-  SHOW_ME, VISIBILITY, GREEK_FRATERNITIES, GREEK_SORORITIES, LOOKING_FOR, ageFrom, greekKindOf, type GreekKind, type Profile,
+  SHOW_ME, VISIBILITY, HILL_SPOTS, PHOTO_SPOTS, normalizeCourse, GREEK_FRATERNITIES, GREEK_SORORITIES, LOOKING_FOR, ageFrom, greekKindOf, type GreekKind, type Profile,
 } from '@/lib/constants';
 
 type Draft = Pick<Profile, 'name' | 'birthday' | 'gender' | 'show_me' | 'pronouns' | 'major' | 'grad_year' | 'bio' | 'prompts' |
-  'interests' | 'classes' | 'dorm' | 'spots' | 'photos' | 'visibility' | 'captions' | 'looking_for' | 'greek'>;
+  'interests' | 'classes' | 'dorm' | 'spots' | 'photos' | 'visibility' | 'captions' | 'looking_for' | 'greek' | 'photo_locations' | 'fav_spot' | 'fav_order'>;
 
 const STEPS = ['birthday', 'basics', 'photos', 'about', 'interests', 'campus', 'visibility'] as const;
 type Step = (typeof STEPS)[number];
@@ -59,6 +61,7 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
     interests: profile?.interests ?? [], classes: profile?.classes ?? [], dorm: profile?.dorm ?? null, spots: profile?.spots ?? [],
     photos: profile?.photos ?? [], visibility: profile?.visibility ?? 'tier',
     captions: (profile?.photos ?? []).map((_, i) => profile?.captions?.[i] ?? ''), looking_for: profile?.looking_for ?? null, greek: profile?.greek ?? null,
+    photo_locations: (profile?.photos ?? []).map((_, i) => profile?.photo_locations?.[i] ?? ''), fav_spot: profile?.fav_spot ?? null, fav_order: profile?.fav_order ?? '',
   }));
   const [bday, setBday] = useState(() => {
     const [y, m, dd] = (profile?.birthday ?? '').split('-');
@@ -69,9 +72,13 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [majorQuery, setMajorQuery] = useState('');
+  const [classQuery, setClassQuery] = useState('');
+  const [locFor, setLocFor] = useState<number | null>(null);
+  const [locText, setLocText] = useState('');
   const [greekQuery, setGreekQuery] = useState('');
   const [greekKind, setGreekKind] = useState<GreekKind | null>(() => greekKindOf(profile?.greek));
-  const [invite, setInvite] = useState('');
+  const [invite, setInvite] = useState(() => (mode === 'onboarding' ? store.get(PENDING_INVITE) ?? '' : ''));
+  const [agreed, setAgreed] = useState(!!profile?.terms_accepted_at);
   const [inviteDone, setInviteDone] = useState(false);
   const scroll = useRef<ScrollView>(null);
   const set = (patch: Partial<Draft>) => { setD((x) => ({ ...x, ...patch })); setError(''); };
@@ -81,7 +88,7 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
     setUploading(true);
     try {
       const url = await pickAndUploadPhoto(userId);
-      if (url) setD((x) => ({ ...x, photos: [...x.photos, url], captions: [...x.captions.slice(0, x.photos.length), ''] }));
+      if (url) setD((x) => ({ ...x, photos: [...x.photos, url], captions: [...x.captions.slice(0, x.photos.length), ''], photo_locations: [...x.photo_locations.slice(0, x.photos.length), ''] }));
     } catch (e) {
       Alert.alert("Couldn't upload that photo", friendlyError(e));
     } finally {
@@ -90,7 +97,7 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
   };
   const removePhoto = (url: string) => {
     const i = d.photos.indexOf(url);
-    set({ photos: d.photos.filter((p) => p !== url), captions: d.captions.filter((_, ci) => ci !== i) });
+    set({ photos: d.photos.filter((p) => p !== url), captions: d.captions.filter((_, ci) => ci !== i), photo_locations: d.photo_locations.filter((_, ci) => ci !== i) });
     deletePhoto(url).catch(() => {});
   };
 
@@ -111,8 +118,13 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
         ...d, name: d.name?.trim() ?? null, bio: d.bio?.trim() ?? null, birthday: birthdayIso(),
         prompts: d.prompts.map((p) => ({ q: p.q, a: p.a.trim() })),
         captions: d.photos.map((_, i) => (d.captions[i] ?? '').trim()),
-        ...(final ? { onboarded: true } : {}),
+        photo_locations: d.photos.map((_, i) => (d.photo_locations[i] ?? '').trim()),
+        major: d.major?.trim() || null,
+        fav_spot: d.fav_spot?.trim() || null,
+        fav_order: d.fav_spot ? d.fav_order?.trim() || null : null,
+        ...(final ? { onboarded: true, terms_accepted_at: profile?.terms_accepted_at ?? new Date().toISOString() } : {}),
       });
+      if (final) store.remove(PENDING_INVITE);
       onDone?.();
     } catch (e) {
       setError(friendlyError(e));
@@ -124,7 +136,10 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
   const next = () => {
     const err = check(STEPS[step], d, bday);
     if (err) { setError(err); return; }
-    if (step === STEPS.length - 1) save(true);
+    if (step === STEPS.length - 1) {
+      if (!agreed) { setError('Check the box to agree to the Terms and Privacy Policy.'); return; }
+      save(true);
+    }
     else { setStep(step + 1); scroll.current?.scrollTo({ y: 0, animated: false }); }
   };
 
@@ -158,9 +173,12 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
           <View><Label>First name</Label><Input value={d.name ?? ''} onChangeText={(t) => set({ name: t })} maxLength={20} placeholder="Your first name" autoComplete="given-name" /></View>
           <View>
             <Label>Major{d.major ? `: ${d.major}` : ''}</Label>
-            <Input value={majorQuery} onChangeText={setMajorQuery} placeholder="Search majors" style={{ marginBottom: 10 }} />
+            <Input value={majorQuery} onChangeText={setMajorQuery} placeholder="Search or type your major" maxLength={40} style={{ marginBottom: 10 }} returnKeyType="done" />
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              {majors.slice(0, majorQuery ? 20 : 12).map((m) => <Chip key={m} small label={m} selected={d.major === m} onPress={() => set({ major: m })} />)}
+              {majorQuery.trim().length >= 3 && !MAJORS.some((m) => m.toLowerCase() === majorQuery.trim().toLowerCase()) && (
+                <Chip small label={`Use “${majorQuery.trim()}”`} selected={d.major === majorQuery.trim()} onPress={() => { set({ major: majorQuery.trim() }); Keyboard.dismiss(); }} />
+              )}
+              {majors.slice(0, majorQuery ? 20 : 12).map((m) => <Chip key={m} small label={m} selected={d.major === m} onPress={() => { set({ major: m }); Keyboard.dismiss(); }} />)}
             </View>
           </View>
           <View>
@@ -223,13 +241,19 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
         </View>
         {d.photos.length > 0 && (
           <View style={{ gap: 10 }}>
-            <Label style={{ marginBottom: 0 }}>Captions (optional)</Label>
-            <Text style={{ fontFamily: F.body, fontSize: 13, color: C.muted, marginTop: -6 }}>Say where it was or what’s happening. Shows under the photo.</Text>
+            <Label style={{ marginBottom: 0 }}>Captions and locations (optional)</Label>
+            <Text style={{ fontFamily: F.body, fontSize: 13, color: C.muted, marginTop: -6 }}>Say what’s happening and where. Shows with the photo. Never uses your phone’s location.</Text>
             {d.photos.map((url, i) => (
-              <View key={url} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <View key={url} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
                 <Image source={{ uri: url }} style={{ width: 44, height: 55, borderRadius: 8 }} contentFit="cover" />
-                <Input value={d.captions[i] ?? ''} maxLength={80} placeholder="e.g. Top of Flagstaff at sunrise"
-                  onChangeText={(t) => set({ captions: d.photos.map((_, ci) => (ci === i ? t : d.captions[ci] ?? '')) })} style={{ flex: 1 }} />
+                <View style={{ flex: 1, gap: 6 }}>
+                  <Input value={d.captions[i] ?? ''} maxLength={80} placeholder="Caption, e.g. sunrise hike, regret nothing" returnKeyType="done"
+                    onChangeText={(t) => set({ captions: d.photos.map((_, ci) => (ci === i ? t : d.captions[ci] ?? '')) })} />
+                  <Pressable onPress={() => { setLocFor(i); setLocText(d.photo_locations[i] ?? ''); }} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4 }}>
+                    <MapPin size={14} color={d.photo_locations[i] ? C.pink : C.muted} />
+                    <Text style={{ fontFamily: F.semibold, fontSize: 13, color: d.photo_locations[i] ? C.text : C.muted }}>{d.photo_locations[i] || 'Add location'}</Text>
+                  </Pressable>
+                </View>
               </View>
             ))}
           </View>
@@ -244,18 +268,37 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
         <View style={{ gap: 18 }}>
           <View>
             <Label>Bio ({(d.bio ?? '').length}/300)</Label>
-            <Input value={d.bio ?? ''} onChangeText={(t) => set({ bio: t })} maxLength={300} multiline placeholder="Sophomore, ski bum in training, will rank every burrito on the Hill…" />
+            <Input value={d.bio ?? ''} onChangeText={(t) => set({ bio: t.replace(/\n/g, ' ') })} maxLength={300} multiline returnKeyType="done" submitBehavior="blurAndSubmit"
+              placeholder="Sophomore, ski bum in training, will rank every burrito on the Hill…" />
+          </View>
+          <View>
+            <Label>Favorite thing to get at… (optional)</Label>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {HILL_SPOTS.map((h) => <Chip key={h} small label={h} selected={d.fav_spot === h} onPress={() => set({ fav_spot: d.fav_spot === h ? null : h })} />)}
+              <Chip small label="Somewhere else" selected={!!d.fav_spot && !HILL_SPOTS.includes(d.fav_spot)} onPress={() => set({ fav_spot: d.fav_spot && !HILL_SPOTS.includes(d.fav_spot) ? null : ' ' })} />
+            </View>
+            {!!d.fav_spot && !HILL_SPOTS.includes(d.fav_spot) && (
+              <Input value={d.fav_spot.trimStart()} onChangeText={(t) => set({ fav_spot: t || ' ' })} maxLength={40} placeholder="Where?" style={{ marginTop: 10 }} returnKeyType="done" />
+            )}
+            {!!d.fav_spot && (
+              <Input value={d.fav_order ?? ''} onChangeText={(t) => set({ fav_order: t })} maxLength={60} placeholder="Your order, e.g. Buff Mac and a shake" style={{ marginTop: 10 }} returnKeyType="done" />
+            )}
           </View>
           {d.prompts.map((p, i) => (
             <View key={i} style={{ backgroundColor: C.surface, borderRadius: 18, padding: 12, gap: 10, borderWidth: 1, borderColor: C.line }}>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
                 {PROMPT_QUESTIONS.map((q, qi) => (
                   <Chip key={qi} small label={q} selected={p.q === qi}
-                    onPress={() => { if (!d.prompts.some((o, oi) => oi !== i && o.q === qi)) set({ prompts: d.prompts.map((o, oi) => (oi === i ? { ...o, q: qi } : o)) }); }} />
+                    onPress={() => {
+                      // If another prompt already uses this question, swap the two questions.
+                      const other = d.prompts.findIndex((o, oi) => oi !== i && o.q === qi);
+                      set({ prompts: d.prompts.map((o, oi) => (oi === i ? { ...o, q: qi } : oi === other ? { ...o, q: p.q } : o)) });
+                    }} />
                 ))}
               </ScrollView>
               <Text style={{ fontFamily: F.semibold, color: C.text, fontSize: 15 }}>{PROMPT_QUESTIONS[p.q]}</Text>
-              <Input value={p.a} onChangeText={(t) => set({ prompts: d.prompts.map((o, oi) => (oi === i ? { ...o, a: t } : o)) })} maxLength={150} placeholder="Your answer" multiline style={{ minHeight: 70 }} />
+              <Input value={p.a} onChangeText={(t) => set({ prompts: d.prompts.map((o, oi) => (oi === i ? { ...o, a: t.replace(/\n/g, ' ') } : o)) })} maxLength={150} placeholder="Your answer"
+                multiline style={{ minHeight: 70 }} returnKeyType="done" submitBehavior="blurAndSubmit" />
             </View>
           ))}
         </View>
@@ -276,9 +319,19 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
       render: () => (
         <View style={{ gap: 22 }}>
           <View>
-            <Label>Classes this semester ({d.classes.length}/6)</Label>
+            <Label>Classes this semester ({d.classes.length}/8)</Label>
+            <Input value={classQuery} onChangeText={setClassQuery} placeholder="Search or add, e.g. CSCI 3104" autoCapitalize="characters" maxLength={10} style={{ marginBottom: 10 }} returnKeyType="done"
+              onSubmitEditing={() => { const c = normalizeCourse(classQuery); if (c) { set({ classes: toggle(d.classes, c, 8) }); setClassQuery(''); } }} />
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              {COURSES.map((c) => <Chip key={c} small label={c} selected={d.classes.includes(c)} onPress={() => set({ classes: toggle(d.classes, c, 6) })} />)}
+              {d.classes.map((c) => <Chip key={`sel-${c}`} small label={c} selected onPress={() => set({ classes: d.classes.filter((x) => x !== c) })} />)}
+              {(() => {
+                const typed = normalizeCourse(classQuery);
+                return typed && !d.classes.includes(typed) && !COURSES.includes(typed)
+                  ? <Chip small label={`Add ${typed}`} onPress={() => { set({ classes: toggle(d.classes, typed, 8) }); setClassQuery(''); Keyboard.dismiss(); }} /> : null;
+              })()}
+              {COURSES.filter((c) => !d.classes.includes(c) && c.replace(' ', '').includes(classQuery.trim().toUpperCase().replace(/\s/g, '')))
+                .slice(0, classQuery ? 30 : 12)
+                .map((c) => <Chip key={c} small label={c} onPress={() => { set({ classes: toggle(d.classes, c, 8) }); setClassQuery(''); }} />)}
             </View>
           </View>
           <View>
@@ -335,6 +388,22 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
               <Text style={{ fontFamily: F.body, fontSize: 12, color: C.muted, marginTop: 6 }}>Your friend gets credit and you get a bonus Super Like.</Text>
             </View>
           )}
+          {mode === 'onboarding' && (
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 18, alignItems: 'flex-start' }}>
+              <Pressable onPress={() => { setAgreed(!agreed); setError(''); }} accessibilityRole="checkbox" accessibilityState={{ checked: agreed }}
+                accessibilityLabel="I agree to the Terms of Use and Privacy Policy" hitSlop={8}
+                style={{ width: 26, height: 26, borderRadius: 8, borderWidth: 2, borderColor: agreed ? C.pink : C.line, backgroundColor: agreed ? C.pink : 'transparent', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>
+                {agreed && <Check size={16} color="#fff" strokeWidth={3} />}
+              </Pressable>
+              <Text style={{ flex: 1, fontFamily: F.body, fontSize: 14, lineHeight: 20, color: C.muted }}>
+                I’m 18 or older and I agree to the{' '}
+                <Text style={{ color: C.text, fontFamily: F.semibold, textDecorationLine: 'underline' }} onPress={() => router.push('/legal/terms')}>Terms of Use</Text>,{' '}
+                <Text style={{ color: C.text, fontFamily: F.semibold, textDecorationLine: 'underline' }} onPress={() => router.push('/legal/guidelines')}>Community Guidelines</Text> and{' '}
+                <Text style={{ color: C.text, fontFamily: F.semibold, textDecorationLine: 'underline' }} onPress={() => router.push('/legal/privacy')}>Privacy Policy</Text>.
+                Swirl has zero tolerance for harassment or inappropriate content.
+              </Text>
+            </View>
+          )}
         </View>
       ),
     },
@@ -361,7 +430,7 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
     <Screen edges={['top', 'bottom']}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         {header}
-        <ScrollView ref={scroll} contentContainerStyle={{ padding: 24, gap: mode === 'edit' ? 36 : 0 }} keyboardShouldPersistTaps="handled">
+        <ScrollView ref={scroll} contentContainerStyle={{ padding: 24, gap: mode === 'edit' ? 36 : 0 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
           {(mode === 'edit' ? STEPS : [STEPS[step]]).map((s) => (
             <View key={s}>
               <H1 style={{ fontSize: mode === 'edit' ? 22 : 30 }}>{sections[s].title}</H1>
@@ -379,6 +448,27 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
           )}
         </View>
       </KeyboardAvoidingView>
+
+      <Sheet visible={locFor !== null} onClose={() => setLocFor(null)} title="Where was this?">
+        <View style={{ gap: 12, paddingBottom: 8 }}>
+          <Input value={locText} onChangeText={setLocText} maxLength={40} placeholder="Type a place, e.g. Flagstaff Mountain" returnKeyType="done" />
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {PHOTO_SPOTS.map((s) => <Chip key={s} small label={s} selected={locText === s} onPress={() => { setLocText(s); Keyboard.dismiss(); }} />)}
+          </View>
+          <Button label="Save location" onPress={() => {
+            const i = locFor;
+            if (i !== null) set({ photo_locations: d.photos.map((_, ci) => (ci === i ? locText.trim() : d.photo_locations[ci] ?? '')) });
+            setLocFor(null);
+          }} />
+          {locFor !== null && !!d.photo_locations[locFor] && (
+            <Button label="Remove location" variant="ghost" small onPress={() => {
+              const i = locFor;
+              set({ photo_locations: d.photos.map((_, ci) => (ci === i ? '' : d.photo_locations[ci] ?? '')) });
+              setLocFor(null);
+            }} />
+          )}
+        </View>
+      </Sheet>
     </Screen>
   );
 }

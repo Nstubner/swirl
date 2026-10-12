@@ -13,7 +13,7 @@ A college dating app with a live, like-based campus leaderboard. Launching at CU
 1. Supabase dashboard → **SQL Editor** → New query → paste all of `supabase/schema.sql` → **Run**. It's safe to run again after updates.
 2. **Authentication → Emails → Templates**: in both **Magic Link** and **Confirm signup**, add the code to the email body, e.g. `Your Swirl code is {{ .Token }}`. The app signs people in with a 6-digit code, not a link.
 3. **Authentication → Sign In / Providers → Email**: keep email enabled. (Optional: set the OTP length to 6.)
-4. Before inviting real users: **Authentication → Emails → SMTP Settings** → connect a real sender (Resend, Postmark, SendGrid). Supabase's built-in sender only allows a few emails per hour.
+4. Before inviting real users: **Authentication → Emails → SMTP Settings** → connect a real sender. Gmail works for testing (about 500 emails a day). For launch, use Resend (free for 3,000 emails a month): buy a domain (about $12/year), add it in Resend, paste the DNS records it shows into your domain registrar, then put Resend's SMTP details into Supabase with a sender like `hello@yourdomain.com`.
 
 Never put the database password or the `service_role` / secret key in this repo or the app. The app only uses the public publishable key in `app/.env`.
 
@@ -29,6 +29,36 @@ select id from auth.users where email = 'you@colorado.edu';
 Then reopen the app → Profile → **Admin dashboard** (signups, activity, retention, matches, reports, bans, hoodie claims, events and seasons).
 
 To download raw data as a spreadsheet: Supabase → Table Editor → pick a table → Export → CSV.
+
+## Sample profiles (testing only)
+
+`supabase/sample_data.sql` adds 12 fake CU students so you can see full profiles, the leaderboard and team boards. Four of them have already liked every admin. Remove them before real users join:
+
+```sql
+delete from auth.users where email like '%@sample.swirl.edu';
+```
+
+## App Store reviewer account
+
+Apple needs a login it can use. Follow the steps at the top of `supabase/reviewer_account.sql` (create `appreview@demo.swirl.edu` with a password in **Authentication → Users → Add user**, tick Auto Confirm, then run the file). Reviewers tap **Have a test account? Sign in with a password** on the sign-in screen.
+
+## Shipping to TestFlight and the App Store
+
+```bash
+cd app
+npx eas-cli@latest login
+npx eas-cli@latest init                                   # links the app to your Expo account (also turns on push)
+npx eas-cli@latest build --platform ios --profile production
+npx eas-cli@latest submit --platform ios --latest          # uploads to App Store Connect → TestFlight
+```
+
+Build numbers go up automatically. In App Store Connect you'll need: a Privacy Policy URL and Support URL (the published policies page has `#privacy` and `#support` sections), the reviewer login above, and age rating 17+ (dating apps).
+
+Policies shown in the app live in `app/src/lib/legal.ts`. Set `SUPPORT_EMAIL` there once you have a support address.
+
+## Support and crash reports
+
+People can message you from **Profile → Help & support**. Admins get a push and see messages under **Admin → Support**, along with app errors and crashes (screen, phone type, app version).
 
 ## Run it on your phone
 
@@ -64,4 +94,4 @@ Dorms and Greek chapters show once they have 5+ members. Points from your own te
 
 ## Not built yet
 
-Group mode, double dates, daily picks, privacy policy/terms pages, and an App Review demo account.
+Group mode, double dates, daily picks, and automatic photo screening (needs a paid image-moderation service such as Sightengine or AWS Rekognition; for now, reports and admin review cover it). Tappable invite links in texts need a website domain (set `INVITE_URL` in `app/src/lib/constants.ts`); inside the app, `swirl://i/CODE` already fills in the invite code.

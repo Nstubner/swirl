@@ -26,7 +26,17 @@ export function ExtrasProvider({ children }: { children: ReactNode }) {
     open();
     registerForPush();
     const sub = AppState.addEventListener('change', (s) => { if (s === 'active') open(); });
-    return () => { alive = false; sub.remove(); };
+    // Keep the unread badge and "Likes you" count fresh while the app is open.
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const soon = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => fetchExtras().then((x) => { if (alive) setExtras(x); }), 600);
+    };
+    const ch = supabase.channel('extras-live')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, soon)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'matches' }, soon)
+      .subscribe();
+    return () => { alive = false; sub.remove(); if (t) clearTimeout(t); supabase.removeChannel(ch); };
   }, []);
 
   return <ExtrasContext.Provider value={{ extras, refreshExtras }}>{children}</ExtrasContext.Provider>;
@@ -34,8 +44,12 @@ export function ExtrasProvider({ children }: { children: ReactNode }) {
 
 export const useExtras = () => useContext(ExtrasContext);
 
+/** Invite code saved from an invite link until onboarding uses it. */
+export const PENDING_INVITE = 'swirl_pending_invite';
+
 /** Tiny wrapper around localStorage (installed by expo-sqlite on iOS/Android) that never throws. */
 export const store = {
   get(key: string) { try { return globalThis.localStorage?.getItem(key) ?? null; } catch { return null; } },
   set(key: string, value: string) { try { globalThis.localStorage?.setItem(key, value); } catch { /* ignore */ } },
+  remove(key: string) { try { globalThis.localStorage?.removeItem(key); } catch { /* ignore */ } },
 };

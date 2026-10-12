@@ -11,7 +11,8 @@
       "bundleIdentifier": "com.nstubner.swirl",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
-      }
+      },
+      "buildNumber": "1"
     },
     "android": {
       "adaptiveIcon": {
@@ -21,7 +22,8 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.nstubner.swirl"
+      "package": "com.nstubner.swirl",
+      "versionCode": 1
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -46,6 +48,15 @@
         "expo-notifications",
         {
           "color": "#FF3D8B"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "backgroundColor": "#0E0B16"
         }
       ]
     ],

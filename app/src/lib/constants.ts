@@ -38,6 +38,10 @@ export type Profile = {
   push_enabled: boolean;
   verified: boolean;
   verification_status: 'none' | 'pending' | 'approved' | 'rejected';
+  photo_locations: string[];
+  fav_spot: string | null;
+  fav_order: string | null;
+  terms_accepted_at: string | null;
 };
 
 export type LookingFor = 'serious' | 'casual' | 'unsure' | 'friends';
@@ -70,6 +74,9 @@ export type DeckPerson = {
   liked_me_comment?: string | null;
   i_swiped?: boolean;
   liked_me?: boolean;
+  photo_locations?: string[];
+  fav_spot?: string | null;
+  fav_order?: string | null;
 };
 
 export type TierId = 'bronze' | 'silver' | 'gold' | 'platinum' | 'diamond';
@@ -122,12 +129,27 @@ export const INTERESTS = [
   'Plant parent', 'Dogs', 'Cats', 'Tarot',
 ];
 
+/** Common CU courses to search. People can also add any course as "DEPT 1234". */
 export const COURSES = [
-  'APPM 1350', 'APPM 2350', 'ASTR 1000', 'ATOC 1050', 'BCOR 1015', 'BCOR 1025', 'BCOR 2201', 'BCOR 2203',
-  'BCOR 2204', 'CHEM 1113', 'CINE 1502', 'CSCI 1300', 'CSCI 2270', 'EBIO 1210', 'ECON 2010', 'ECON 2020',
-  'ECON 3070', 'ENVS 1000', 'IPHY 3410', 'MATH 1300', 'MCDB 1150', 'PHIL 1000', 'PHYS 1110', 'PSYC 1001',
-  'SOCY 1001', 'WRTG 1150',
+  'ACCT 3220', 'ANTH 2010', 'APPM 1350', 'APPM 1360', 'APPM 2350', 'APPM 2360', 'ARTH 1300', 'ARTS 1010', 'ASEN 1022',
+  'ASTR 1000', 'ASTR 1010', 'ATOC 1050', 'ATOC 1060', 'BADM 1004', 'BCOR 1015', 'BCOR 1025', 'BCOR 2201', 'BCOR 2203',
+  'BCOR 2204', 'BCOR 2205', 'BCOR 2206', 'BCOR 3000', 'BCOR 3010', 'BUSM 3001', 'CHEM 1113', 'CHEM 1114', 'CHEM 1133',
+  'CHEM 3311', 'CINE 1502', 'CINE 2004', 'COMM 1300', 'COMM 1600', 'CSCI 1200', 'CSCI 1300', 'CSCI 2270', 'CSCI 2400',
+  'CSCI 2824', 'CSCI 3104', 'CSCI 3155', 'CSCI 3308', 'EBIO 1210', 'EBIO 1220', 'ECEN 2250', 'ECON 1000', 'ECON 2010',
+  'ECON 2020', 'ECON 3070', 'ECON 3080', 'EDUC 2020', 'EMUS 1081', 'ENGL 1191', 'ENVS 1000', 'ENVS 3020', 'ETHN 2001',
+  'FNCE 3010', 'FNCE 3030', 'FNCE 3040', 'GEOG 1001', 'GEOG 1011', 'GEOL 1010', 'HIST 1015', 'HIST 1025', 'HUMN 1010',
+  'INFO 1201', 'INFO 2301', 'IPHY 2800', 'IPHY 3410', 'IPHY 3420', 'IPHY 3430', 'JRNL 1001', 'LING 1000', 'MATH 1011',
+  'MATH 1081', 'MATH 1112', 'MATH 1300', 'MATH 2300', 'MATH 2400', 'MCDB 1150', 'MCDB 2150', 'MCEN 1024', 'MGMT 3000',
+  'MKTG 3050', 'MUEL 2752', 'NRSC 2100', 'PHIL 1000', 'PHIL 1100', 'PHIL 1200', 'PHYS 1110', 'PHYS 1120', 'PHYS 1140',
+  'PHYS 2010', 'PHYS 2020', 'PSCI 1101', 'PSCI 2012', 'PSYC 1001', 'PSYC 2012', 'PSYC 2606', 'PSYC 3101', 'SOCY 1001',
+  'SOCY 1016', 'SPAN 1010', 'SPAN 1020', 'SPAN 2110', 'STAT 2600', 'THTR 1009', 'WGST 2000', 'WRTG 1100', 'WRTG 1150',
+  'WRTG 3020',
 ];
+/** "csci 3104" → "CSCI 3104" if it looks like a course code, else null. */
+export function normalizeCourse(input: string): string | null {
+  const m = input.trim().toUpperCase().match(/^([A-Z]{3,4})\s*-?\s*(\d{4})$/);
+  return m ? `${m[1]} ${m[2]}` : null;
+}
 
 export const DORMS = [
   'Andrews Hall', 'Arnett Hall', 'Baker Hall', 'Buckingham Hall', 'Cheyenne Arapaho Hall', 'Darley North',
@@ -146,6 +168,7 @@ export const PROMPT_QUESTIONS = [
   "I'm weirdly competitive about…", 'Green flags I look for…', 'My most controversial opinion…',
   "Let's debate this…", "The best concert I've been to…", "I'll pick the spot if you…", 'Typical Sunday…',
   'I geek out on…', 'Two truths and a lie…', 'Together we could…',
+  'The most Boulder thing about me…', 'Best spot on the Hill for…', 'My Sunday reset is…', 'A class everyone should take…',
 ];
 
 export const REPORT_REASONS = [
@@ -165,8 +188,10 @@ export const DATE_SPOTS: DateSpot[] = [
   { id: 'farrand', name: 'Farrand Field', cat: 'outdoors', area: 'On campus', tags: ['Spikeball', 'Soccer', 'Football Saturdays'] },
   { id: 'sink', name: 'The Sink', cat: 'food', area: 'The Hill', tags: ['Football Saturdays', 'Cooking', 'Brunch'] },
   { id: 'petes', name: "Illegal Pete's", cat: 'food', area: 'The Hill', tags: ['Hip-hop', 'Live music', 'Cooking'] },
+  { id: 'halffast', name: 'Half Fast Subs', cat: 'food', area: 'The Hill', tags: ['Football Saturdays', 'Gaming'] },
+  { id: 'gaia', name: 'Gaia Masala & Burger', cat: 'food', area: 'The Hill', tags: ['Travel', 'Cooking', 'Anime'] },
+  { id: 'lollicup', name: 'Lollicup', cat: 'coffee', area: 'The Hill', tags: ['Anime', 'Gaming', 'Reading'] },
   { id: 'dushanbe', name: 'Boulder Dushanbe Teahouse', cat: 'food', area: 'Downtown', tags: ['Art', 'Travel', 'Brunch', 'Yoga'] },
-  { id: 'cosmos', name: "Cosmo's Pizza", cat: 'food', area: 'The Hill', tags: ['Gaming', 'EDM', 'Anime'] },
   { id: 'fox', name: 'The Fox Theatre', cat: 'nightlife', area: 'The Hill', tags: ['Live music', 'Concerts', 'EDM', 'Indie'] },
   { id: 'fiske', name: 'Fiske Planetarium', cat: 'nightlife', area: 'On campus', tags: ['Astronomy', 'Vinyl', 'Film'] },
   { id: 'darkhorse', name: 'Dark Horse', cat: 'nightlife', area: 'Baseline Rd', tags: ['Trivia', 'Chess', 'Karaoke'], age21: true },
@@ -232,6 +257,8 @@ export const BADGES: Record<string, { label: string; body: string }> = {
 
 /** Link included when people share their invite code. Set this to your TestFlight or App Store link once you have it. */
 export const APP_LINK = '';
+/** Web address that forwards to the app's invite screen, e.g. 'https://swirlapp.com/i/'. Leave empty until you have a website. Inside the app, swirl://i/CODE already works. */
+export const INVITE_URL = '';
 
 /** Data returned by get_extras(). */
 export type Extras = {
@@ -250,6 +277,7 @@ export type Extras = {
   verification_status: 'none' | 'pending' | 'approved' | 'rejected';
   likes_count: number;
   likes_unlocked: boolean;
+  unread_chats: number;
   event: { name: string; description: string | null; multiplier: number; ends_at: string } | null;
   next_event: { name: string; description: string | null; multiplier: number; starts_at: string } | null;
   season: { name: string; started_at: string } | null;
@@ -304,3 +332,12 @@ export const ICEBREAKERS = [
 ];
 
 export const VERIFY_POSES = ['a peace sign ✌️', 'a thumbs up 👍', 'your hand on your head', 'pointing at the camera ☝️', 'a wave 👋'];
+
+/** Spots for "Favorite thing to get at ___" (people can also type their own). */
+export const HILL_SPOTS = ['The Sink', 'Half Fast Subs', "Illegal Pete's", 'Gaia Masala & Burger', 'Fat Shack', 'Lollicup'];
+
+/** Suggestions for a photo's 📍 location (people can also type their own). */
+export const PHOTO_SPOTS = [
+  'Chautauqua', 'Flagstaff Mountain', 'Royal Arch', 'Boulder Creek', 'Pearl Street', 'The Hill', 'Folsom Field', 'Norlin Quad',
+  'Farrand Field', 'Varsity Lake', 'Eldorado Canyon', 'Red Rocks', 'Denver', 'Breckenridge', 'Vail', 'Rocky Mountain National Park',
+];

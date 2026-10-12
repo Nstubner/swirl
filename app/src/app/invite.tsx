@@ -8,7 +8,7 @@ import { InfoButton } from '@/lib/explain';
 import { useExtras } from '@/lib/extras';
 import { useAuth } from '@/lib/auth';
 import { supabase, friendlyError } from '@/lib/supabase';
-import { APP_LINK, INVITE_MILESTONES } from '@/lib/constants';
+import { APP_LINK, INVITE_URL, INVITE_MILESTONES } from '@/lib/constants';
 import { C, F, GRAD } from '@/lib/theme';
 
 const SIZES = ['S', 'M', 'L', 'XL', 'XXL'];
@@ -27,7 +27,7 @@ export default function Invite() {
   const canRedeem = !!extras?.can_redeem;
 
   const share = () => {
-    const msg = `Join me on Swirl, the CU Boulder dating app with a live campus leaderboard. Use my code ${myCode} when you sign up and you get a free Super Like.${APP_LINK ? ` ${APP_LINK}` : ''}`;
+    const msg = `Join me on Swirl, the CU Boulder dating app with a live campus leaderboard. Use my code ${myCode} when you sign up and you get a free Super Like.${INVITE_URL ? ` ${INVITE_URL}${myCode}` : APP_LINK ? ` ${APP_LINK}` : ''}`;
     Share.share({ message: msg }).catch(() => {});
   };
 

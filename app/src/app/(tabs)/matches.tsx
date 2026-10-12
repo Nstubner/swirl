@@ -13,7 +13,7 @@ import { C, F, GRAD } from '@/lib/theme';
 
 export type MatchRow = {
   match_id: string; other_id: string; name: string; photo: string | null; tier: TierId | null; created_at: string;
-  last_body: string | null; last_sender: string | null; last_at: string | null; date_mine: boolean; date_paid: boolean;
+  last_body: string | null; last_sender: string | null; last_at: string | null; date_mine: boolean; date_paid: boolean; unread?: number; verified?: boolean;
 };
 
 function ago(iso: string) {
@@ -99,16 +99,20 @@ export default function Matches() {
             ListEmptyComponent={<Text style={{ fontFamily: F.body, color: C.muted, paddingHorizontal: 20 }}>Say hi to your new matches. Messaging within 24 hours earns +{PTS.reply}.</Text>}
             renderItem={({ item: r }) => {
               const yourTurn = r.last_sender && r.last_sender !== me;
+              const unread = (r.unread ?? 0) > 0;
               return (
                 <Pressable onPress={() => router.push(`/chat/${r.match_id}`)} style={styles.row}>
                   <Avatar uri={r.photo} name={r.name} size={52} />
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                      <Text style={styles.name}>{r.name}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={styles.name}>{r.name}</Text>
+                        {unread && <View style={styles.unreadDot} accessibilityLabel={`${r.unread} unread`} />}
+                      </View>
                       <Text style={styles.time}>{r.last_at ? ago(r.last_at) : ''}</Text>
                     </View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <Text style={[styles.preview, yourTurn && { color: C.text, fontFamily: F.semibold }]} numberOfLines={1}>
+                      <Text style={[styles.preview, (yourTurn || unread) && { color: C.text, fontFamily: F.semibold }]} numberOfLines={1}>
                         {r.last_sender === me ? 'You: ' : ''}{r.last_body}
                       </Text>
                       {yourTurn && <Explain k="your_turn"><Text style={styles.turn}>Your turn</Text></Explain>}
@@ -132,5 +136,6 @@ const styles = StyleSheet.create({
   name: { fontFamily: F.bold, fontSize: 16, color: C.text },
   time: { fontFamily: F.body, fontSize: 12, color: C.faint },
   preview: { flex: 1, fontFamily: F.body, fontSize: 14, color: C.muted, marginTop: 2 },
+  unreadDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: C.pink },
   turn: { fontFamily: F.bold, fontSize: 11, color: C.text, backgroundColor: C.surface2, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2, overflow: 'hidden' },
 });

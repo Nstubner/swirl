@@ -1,6 +1,6 @@
 import { useId, type ReactNode } from 'react';
 import {
-  ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
   type StyleProp, type TextInputProps, type TextStyle, type ViewStyle,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -265,7 +265,9 @@ export function Loading() {
 export function Sheet({ visible, onClose, title, children }: { visible: boolean; onClose: () => void; title?: string; children: ReactNode }) {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close" />
+      <Pressable style={styles.backdrop} onPress={() => { Keyboard.dismiss(); onClose(); }} accessibilityLabel="Close" />
+      {/* Moves the sheet up above the keyboard when you type in it. */}
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.sheetWrap} pointerEvents="box-none">
       <View style={styles.sheet}>
         <View style={styles.grabber} />
         {title && (
@@ -274,8 +276,11 @@ export function Sheet({ visible, onClose, title, children }: { visible: boolean;
             <Pressable onPress={onClose} accessibilityLabel="Close" style={styles.closeBtn}><X size={18} color={C.text} /></Pressable>
           </View>
         )}
-        {children}
+        <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" bounces={false} showsVerticalScrollIndicator={false}>
+          {children}
+        </ScrollView>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -306,7 +311,8 @@ const styles = StyleSheet.create({
   badge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 999, paddingVertical: 3, paddingLeft: 5, paddingRight: 8, alignSelf: 'flex-start' },
   emptyIcon: { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(91,46,255,0.16)', alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
   backdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.6)' },
-  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '88%', backgroundColor: C.bg, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingBottom: 34 },
+  sheetWrap: { flex: 1, justifyContent: 'flex-end' },
+  sheet: { maxHeight: '88%', backgroundColor: C.bg, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingBottom: 34 },
   grabber: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: C.faint, opacity: 0.5, marginTop: 10, marginBottom: 6 },
   sheetHead: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10 },
   closeBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.surface2, alignItems: 'center', justifyContent: 'center' },

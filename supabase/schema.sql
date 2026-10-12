@@ -200,6 +200,38 @@ alter table public.profiles add column if not exists dorm_changed_at     timesta
 alter table public.profiles add column if not exists greek_changed_at    timestamptz;
 alter table public.profiles add column if not exists photo_locations     text[] not null default '{}';
 alter table public.profiles add column if not exists birthday_changed_at timestamptz;
+alter table public.profiles add column if not exists fav_spot          text;
+alter table public.profiles add column if not exists fav_order         text;
+alter table public.profiles add column if not exists terms_accepted_at timestamptz;
+alter table public.profiles drop constraint if exists profiles_fav_len;
+alter table public.profiles add constraint profiles_fav_len check (char_length(fav_spot) <= 40 and char_length(fav_order) <= 60);
+alter table public.matches add column if not exists a_read_at timestamptz;
+alter table public.matches add column if not exists b_read_at timestamptz;
+
+-- Crash and error reports sent by the app (visible in the admin dashboard).
+create table if not exists public.app_errors (
+  id         bigserial primary key,
+  user_id    uuid references public.profiles(id) on delete set null,
+  message    text not null,
+  stack      text,
+  screen     text,
+  platform   text,
+  app_version text,
+  created_at timestamptz not null default now()
+);
+create index if not exists app_errors_time on public.app_errors (created_at desc);
+
+-- Messages sent from Profile → Help & support (visible in the admin dashboard).
+create table if not exists public.feedback (
+  id         bigserial primary key,
+  user_id    uuid references public.profiles(id) on delete set null,
+  body       text not null check (char_length(body) between 1 and 2000),
+  contact    text,
+  status     text not null default 'new' check (status in ('new','done')),
+  created_at timestamptz not null default now()
+);
+alter table public.feedback enable row level security;   -- no policies: server functions only
+
 alter table public.profiles drop constraint if exists profiles_major_len;
 alter table public.profiles add constraint profiles_major_len check (char_length(major) <= 40);
 alter table public.profiles drop constraint if exists profiles_classes_len;
@@ -384,6 +416,11 @@ begin
     new.verification_photo := old.verification_photo;  new.verification_pose := old.verification_pose;
     new.dorm_changed_at := old.dorm_changed_at;         new.greek_changed_at := old.greek_changed_at;
     new.birthday_changed_at := old.birthday_changed_at;
+    -- Terms: the server stamps the time; it can be set once and never cleared.
+    new.terms_accepted_at := case when old.terms_accepted_at is null and new.terms_accepted_at is not null then now() else old.terms_accepted_at end;
+    if new.onboarded and not old.onboarded and new.terms_accepted_at is null then
+      raise exception 'Agree to the Terms and Privacy Policy to finish';
+    end if;
     -- Birthday: free to set the first time; after that one change, then once every 6 months.
     if old.birthday is not null and new.birthday is distinct from old.birthday then
       if old.birthday_changed_at > now() - interval '6 months' then
@@ -412,6 +449,8 @@ begin
   perform check_text(new.major);
   perform check_text(array_to_string(new.classes, ' '));
   perform check_text(array_to_string(new.photo_locations, ' '));
+  perform check_text(new.fav_spot);
+  perform check_text(new.fav_order);
   return new;
 end $$;
 
@@ -452,6 +491,7 @@ alter table public.daily_active   enable row level security;
 alter table public.admins         enable row level security;   -- no policies: only server functions read it
 alter table public.push_tokens    enable row level security;   -- no policies: server functions only
 alter table public.hidden_teams   enable row level security;   -- no policies: server functions only
+alter table public.app_errors     enable row level security;   -- no policies: server functions only
 
 drop policy if exists "read profiles" on public.profiles;
 create policy "read profiles" on public.profiles for select to authenticated
@@ -541,14 +581,14 @@ create function public.get_deck(p_limit int default 30)
 returns table (id uuid, name text, age int, gender text, pronouns text, major text, grad_year int, bio text,
                prompts jsonb, interests text[], classes text[], dorm text, spots text[], photos text[],
                tier text, super_liked_me boolean, badges text[], captions text[], looking_for text, greek text,
-               verified boolean, liked_me_item text, liked_me_comment text, photo_locations text[])
+               verified boolean, liked_me_item text, liked_me_comment text, photo_locations text[], fav_spot text, fav_order text)
 language sql stable security definer set search_path = public as $$
   with me as (select * from profiles where id = auth.uid())
   select p.id, p.name, date_part('year', age(p.birthday))::int, p.gender, p.pronouns, p.major, p.grad_year, p.bio,
          p.prompts, p.interests, p.classes, p.dorm, p.spots, p.photos,
          case when p.visibility = 'hidden' then null else tier_for(coalesce(s.score, 1000)) end,
          coalesce(x.kind = 'super', false), p.badges, p.captions, p.looking_for, p.greek, p.verified,
-         x.item, x.comment, p.photo_locations
+         x.item, x.comment, p.photo_locations, p.fav_spot, p.fav_order
   from profiles p
   cross join me
   left join scores s on s.user_id = p.id
@@ -575,7 +615,7 @@ returns table (id uuid, name text, age int, gender text, pronouns text, major te
                prompts jsonb, interests text[], classes text[], dorm text, spots text[], photos text[], tier text,
                badges text[], captions text[], looking_for text, greek text, verified boolean,
                liked_me_item text, liked_me_comment text, super_liked_me boolean, i_swiped boolean, liked_me boolean,
-               photo_locations text[])
+               photo_locations text[], fav_spot text, fav_order text)
 language sql stable security definer set search_path = public as $$
   select p.id, p.name, date_part('year', age(p.birthday))::int, p.gender, p.pronouns, p.major, p.grad_year, p.bio,
          p.prompts, p.interests, p.classes, p.dorm, p.spots, p.photos,
@@ -583,7 +623,7 @@ language sql stable security definer set search_path = public as $$
          p.badges, p.captions, p.looking_for, p.greek, p.verified,
          x.item, x.comment, coalesce(x.kind = 'super', false),
          exists (select 1 from swipes w where w.swiper_id = auth.uid() and w.target_id = p.id),
-         x.swiper_id is not null, p.photo_locations
+         x.swiper_id is not null, p.photo_locations, p.fav_spot, p.fav_order
   from profiles p left join scores s on s.user_id = p.id
   left join swipes x on x.swiper_id = p.id and x.target_id = auth.uid() and x.kind in ('like','super')
   where p.id = p_id and (p.id = auth.uid() or (p.onboarded and not p.banned and not is_blocked(auth.uid(), p.id)))
@@ -611,6 +651,12 @@ begin
   if exists (select 1 from profiles where id = me and banned) then raise exception 'Account suspended'; end if;
   if exists (select 1 from swipes where swiper_id = me and target_id = p_target) then
     return json_build_object('matched', false, 'duplicate', true);
+  end if;
+
+  -- Spam limit: 150 likes a day is far more than any real person needs.
+  if p_kind in ('like','super') and (select count(*) from swipes where swiper_id = me and kind in ('like','super')
+                                       and created_at >= day_start(local_date())) >= 150 then
+    raise exception 'Daily like limit reached. Come back tomorrow';
   end if;
 
   if p_kind = 'super' then
@@ -705,7 +751,13 @@ create or replace function public.check_message() returns trigger
 language plpgsql as $$
 begin
   perform check_text(new.body);
-  if current_user in ('authenticated', 'anon') then new.kind := 'text'; end if;
+  if current_user in ('authenticated', 'anon') then
+    new.kind := 'text';
+    -- Spam limit: at most 20 messages a minute.
+    if (select count(*) from messages where sender_id = new.sender_id and created_at > now() - interval '1 minute') >= 20 then
+      raise exception 'You''re sending messages too fast. Wait a moment';
+    end if;
+  end if;
   return new;
 end $$;
 
@@ -830,6 +882,7 @@ begin
   if split_part(p_path, '/', 1) <> auth.uid()::text then raise exception 'Bad upload'; end if;
   update profiles set verification_status = 'pending', verification_photo = p_path, verification_pose = p_pose
    where id = auth.uid() and not verified;
+  perform notify_admins('New verification selfie', 'Someone is waiting for a blue check.', '/admin');
 end $$;
 
 -- Your week on Swirl (shown on the Profile tab every week).
@@ -880,6 +933,10 @@ language sql stable security definer set search_path = public as $$
                       and exists (select 1 from profiles q where q.id = x.swiper_id and q.onboarded and not q.banned)
                       and not is_blocked(p.id, x.swiper_id))::int,
     'likes_unlocked', likes_unlocked(p.id),
+    'unread_chats', (select count(*) from matches m
+                     where p.id in (m.user_a, m.user_b)
+                       and exists (select 1 from messages x where x.match_id = m.id and x.sender_id <> p.id
+                                     and x.created_at > coalesce(case when m.user_a = p.id then m.a_read_at else m.b_read_at end, '-infinity')))::int,
     'event', (select json_build_object('name', e.name, 'description', e.description, 'multiplier', e.multiplier, 'ends_at', e.ends_at)
               from events e where now() >= e.starts_at and now() < e.ends_at order by e.multiplier desc limit 1),
     'next_event', (select json_build_object('name', e.name, 'description', e.description, 'multiplier', e.multiplier, 'starts_at', e.starts_at)
@@ -1004,14 +1061,19 @@ returns json language sql stable security definer set search_path = public as $$
 $$;
 
 -- Matches list with the other person's card and last message.
-create or replace function public.get_matches()
+drop function if exists public.get_matches();
+create function public.get_matches()
 returns table (match_id uuid, other_id uuid, name text, photo text, tier text, created_at timestamptz,
-               last_body text, last_sender uuid, last_at timestamptz, date_mine boolean, date_paid boolean)
+               last_body text, last_sender uuid, last_at timestamptz, date_mine boolean, date_paid boolean,
+               unread int, verified boolean)
 language sql stable security definer set search_path = public as $$
   select m.id, o.id, o.name, o.photos[1],
          case when o.visibility = 'hidden' then null else tier_for(coalesce(s.score, 1000)) end,
          m.created_at, lm.body, lm.sender_id, lm.created_at,
-         case when m.user_a = auth.uid() then m.a_date else m.b_date end, m.date_paid
+         case when m.user_a = auth.uid() then m.a_date else m.b_date end, m.date_paid,
+         (select count(*)::int from messages x where x.match_id = m.id and x.sender_id <> auth.uid()
+            and x.created_at > coalesce(case when m.user_a = auth.uid() then m.a_read_at else m.b_read_at end, '-infinity')),
+         o.verified
   from matches m
   join profiles o on o.id = case when m.user_a = auth.uid() then m.user_b else m.user_a end
   left join scores s on s.user_id = o.id
@@ -1019,6 +1081,74 @@ language sql stable security definer set search_path = public as $$
   where auth.uid() in (m.user_a, m.user_b) and not o.banned
   order by coalesce(lm.created_at, m.created_at) desc
 $$;
+
+-- Opening a chat marks it read (powers unread badges and "Seen").
+create or replace function public.mark_read(p_match uuid) returns void
+language sql security definer set search_path = public as $$
+  update matches set a_read_at = case when user_a = auth.uid() then now() else a_read_at end,
+                     b_read_at = case when user_b = auth.uid() then now() else b_read_at end
+  where id = p_match and auth.uid() in (user_a, user_b)
+$$;
+
+-- The app reports crashes here so you can see them in the admin dashboard.
+create or replace function public.log_error(p_message text, p_stack text, p_screen text, p_platform text, p_version text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if (select count(*) from app_errors where user_id = auth.uid() and created_at > now() - interval '1 day') >= 50 then return; end if;
+  insert into app_errors (user_id, message, stack, screen, platform, app_version)
+  values (auth.uid(), left(p_message, 1000), left(p_stack, 4000), left(p_screen, 200), left(p_platform, 20), left(p_version, 20));
+end $$;
+
+-- Help & support messages from the app. Admins get a push right away.
+create or replace function public.send_feedback(p_body text, p_contact text default null) returns void
+language plpgsql security definer set search_path = public as $$
+declare me uuid := auth.uid();
+begin
+  if me is null then raise exception 'Not signed in'; end if;
+  p_body := trim(p_body);
+  if coalesce(p_body, '') = '' then raise exception 'Write a message first'; end if;
+  if (select count(*) from feedback where user_id = me and created_at > now() - interval '1 day') >= 5 then
+    raise exception 'You''ve sent a lot today. We''ll get back to you soon';
+  end if;
+  insert into feedback (user_id, body, contact) values (me, left(p_body, 2000), left(nullif(trim(p_contact), ''), 200));
+  perform notify_admins('Support message', left(p_body, 100), '/admin');
+end $$;
+
+create or replace function public.admin_feedback(p_limit int default 100)
+returns table (id bigint, created_at timestamptz, body text, contact text, status text, user_name text, user_email text)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'Admins only'; end if;
+  return query
+  select f.id, f.created_at, f.body, f.contact, f.status, p.name, p.email
+  from feedback f left join profiles p on p.id = f.user_id order by f.created_at desc limit p_limit;
+end $$;
+
+create or replace function public.admin_feedback_done(p_id bigint, p_done boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'Admins only'; end if;
+  update feedback set status = case when p_done then 'done' else 'new' end where id = p_id;
+end $$;
+
+-- Tell admins right away about reports and verification requests.
+create or replace function public.notify_admins(p_title text, p_body text, p_url text) returns void
+language plpgsql security definer set search_path = public as $$
+declare a uuid;
+begin
+  for a in select user_id from admins loop perform send_push(a, p_title, p_body, p_url); end loop;
+end $$;
+
+create or replace function public.after_report() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform notify_admins('New report', new.reason || coalesce(': ' || left(new.details, 80), ''), '/admin');
+  return new;
+end $$;
+
+drop trigger if exists reports_after_insert on public.reports;
+create trigger reports_after_insert after insert on public.reports
+  for each row execute function public.after_report();
 
 -- ---------- Admin (only people listed in the admins table) -------------------------
 --
@@ -1080,6 +1210,8 @@ begin
     'looking_for',  (select coalesce(json_object_agg(l, c), '{}') from
                        (select coalesce(looking_for, 'unknown') l, count(*) c from profiles where onboarded group by 1) x),
     'like_comments', (select count(*) from swipes where comment is not null),
+    'errors_today', (select count(*) from app_errors where created_at >= day_start(t)),
+    'feedback_new', (select count(*) from feedback where status = 'new'),
     'season',     (select json_build_object('id', id, 'name', name, 'started_at', started_at) from seasons where ended_at is null order by id desc limit 1),
     'events',     (select coalesce(json_agg(json_build_object('id', id, 'name', name, 'description', description, 'multiplier', multiplier,
                                                               'starts_at', starts_at, 'ends_at', ends_at) order by starts_at), '[]')
@@ -1229,6 +1361,16 @@ begin
   return n;
 end $$;
 
+create or replace function public.admin_errors(p_limit int default 100)
+returns table (id bigint, created_at timestamptz, message text, stack text, screen text, platform text, app_version text, user_name text)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'Admins only'; end if;
+  return query
+  select e.id, e.created_at, e.message, e.stack, e.screen, e.platform, e.app_version, p.name
+  from app_errors e left join profiles p on p.id = e.user_id order by e.created_at desc limit p_limit;
+end $$;
+
 create or replace function public.admin_teams()
 returns table (kind text, name text, members int, hidden boolean)
 language plpgsql stable security definer set search_path = public as $$
@@ -1296,8 +1438,11 @@ grant execute on function
   public.swipe(uuid, text, text, text), public.register_push(text), public.unregister_push(text),
   public.get_likes_me(), public.submit_verification(text, text), public.get_weekly_recap(), public.get_greek_board(),
   public.admin_verifications(), public.admin_review_verification(uuid, boolean), public.admin_notify_all(text, text),
-  public.admin_teams(), public.admin_hide_team(text, text, boolean)
+  public.admin_teams(), public.admin_hide_team(text, text, boolean),
+  public.mark_read(uuid), public.log_error(text, text, text, text, text), public.admin_errors(int),
+  public.send_feedback(text, text), public.admin_feedback(int), public.admin_feedback_done(bigint, boolean)
   to authenticated;
 revoke execute on function public.apply_score(uuid, int, text, uuid) from public, anon, authenticated;
 revoke execute on function public.credit_invite(uuid) from public, anon, authenticated;
 revoke execute on function public.send_push(uuid, text, text, text) from public, anon, authenticated;
+revoke execute on function public.notify_admins(text, text, text) from public, anon, authenticated;

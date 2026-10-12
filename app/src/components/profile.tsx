@@ -12,16 +12,18 @@ import { Explain } from '@/lib/explain';
 import { Avatar, Badges, Button, Chip, Sheet, SwirlGlyph, TierBadge, VerifiedCheck } from './ui';
 
 const classOf = (y: number | null) => (y ? `class of ’${String(y).slice(-2)}` : '');
+const favQuestion = (spot?: string | null) => `Favorite thing to get at ${spot?.trim() || 'the Hill'}`;
 
 /** The thing someone liked on a profile: a photo or a prompt. */
 export type LikeItem = { key: string; label: string; photo?: string; question?: string; answer?: string };
 
 /** Describe an item key like "photo:1" or "prompt:0" against a profile ("your photo", "their prompt"). */
-export function describeItem(key: string | null | undefined, p: Pick<Profile, 'photos' | 'prompts'> | null | undefined): LikeItem | null {
+export function describeItem(key: string | null | undefined, p: Pick<Profile, 'photos' | 'prompts'> & { fav_spot?: string | null; fav_order?: string | null } | null | undefined): LikeItem | null {
   if (!key || !p) return null;
   const [kind, n] = key.split(':');
   const i = Number(n);
   if (kind === 'photo') return { key, label: 'photo', photo: p.photos?.[i] };
+  if (kind === 'fav') return { key, label: 'go-to order', question: favQuestion(p.fav_spot), answer: p.fav_order ?? undefined };
   if (kind === 'prompt') {
     const pr = p.prompts?.[i];
     return { key, label: 'prompt', question: pr ? PROMPT_QUESTIONS[pr.q] : undefined, answer: pr?.a };
@@ -29,7 +31,7 @@ export function describeItem(key: string | null | undefined, p: Pick<Profile, 'p
   return null;
 }
 
-function PhotoBlock({ uri, name, caption, width, onLike }: { uri?: string; name: string; caption?: string; width: number; onLike?: () => void }) {
+function PhotoBlock({ uri, name, caption, location, width, onLike }: { uri?: string; name: string; caption?: string; location?: string; width: number; onLike?: () => void }) {
   return (
     <View>
       <View style={{ width, aspectRatio: 4 / 5, borderRadius: 20, overflow: 'hidden', backgroundColor: C.surface2 }}>
@@ -37,6 +39,12 @@ function PhotoBlock({ uri, name, caption, width, onLike }: { uri?: string; name:
           <LinearGradient colors={GRAD} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
             <Text style={{ fontFamily: F.display, fontSize: 96, color: '#fff' }}>{name.slice(0, 1).toUpperCase()}</Text>
           </LinearGradient>
+        )}
+        {!!location && (
+          <View style={styles.location}>
+            <MapPin size={12} color="#fff" />
+            <Text style={{ fontFamily: F.semibold, fontSize: 12, color: '#fff' }} numberOfLines={1}>{location}</Text>
+          </View>
         )}
         {onLike && <LikeButton onPress={onLike} style={{ position: 'absolute', right: 12, bottom: 12 }} />}
       </View>
@@ -53,10 +61,10 @@ function LikeButton({ onPress, style }: { onPress: () => void; style?: object })
   );
 }
 
-function PromptBlock({ q, a, onLike }: { q: number; a: string; onLike?: () => void }) {
+function PromptBlock({ q, question, a, onLike }: { q?: number; question?: string; a: string; onLike?: () => void }) {
   return (
     <View style={styles.prompt}>
-      <Text style={{ fontFamily: F.semibold, fontSize: 13, color: C.muted }}>{PROMPT_QUESTIONS[q] ?? ''}</Text>
+      <Text style={{ fontFamily: F.semibold, fontSize: 13, color: C.muted }}>{question ?? PROMPT_QUESTIONS[q ?? -1] ?? ''}</Text>
       <Text style={{ fontFamily: F.displayBold, fontSize: 24, lineHeight: 30, color: C.text, marginTop: 8, paddingRight: onLike ? 44 : 0 }}>{a}</Text>
       {onLike && <LikeButton onPress={onLike} style={{ position: 'absolute', right: 12, bottom: 12 }} />}
     </View>
@@ -86,17 +94,22 @@ export function ScrollProfile({ person, me, isMe, onLike, onReport, onBlock, hea
   const shared = new Set(isMe ? [] : me?.interests ?? []);
   const photos = person.photos.length ? person.photos : [undefined];
   const captions = person.captions ?? [];
+  const locations = person.photo_locations ?? [];
   const prompts = person.prompts ?? [];
   const looking = lookingLabel(person.looking_for);
   const theirLike = !isMe && (person.liked_me_comment || person.liked_me_item) ? describeItem(person.liked_me_item, me) : null;
 
   const photo = (i: number) => i < photos.length ? (
-    <PhotoBlock key={`p${i}`} uri={photos[i]} name={person.name} caption={captions[i]} width={w}
+    <PhotoBlock key={`p${i}`} uri={photos[i]} name={person.name} caption={captions[i]} location={locations[i]} width={w}
       onLike={onLike ? () => onLike({ key: `photo:${i}`, label: 'photo', photo: photos[i] }) : undefined} />
   ) : null;
   const prompt = (i: number) => i < prompts.length ? (
     <PromptBlock key={`q${i}`} q={prompts[i].q} a={prompts[i].a}
       onLike={onLike ? () => onLike({ key: `prompt:${i}`, label: 'prompt', question: PROMPT_QUESTIONS[prompts[i].q], answer: prompts[i].a }) : undefined} />
+  ) : null;
+  const fav = person.fav_spot?.trim() && person.fav_order?.trim() ? (
+    <PromptBlock key="fav" question={`🍔 ${favQuestion(person.fav_spot)}`} a={person.fav_order}
+      onLike={onLike ? () => onLike({ key: 'fav', label: 'go-to order', question: favQuestion(person.fav_spot), answer: person.fav_order ?? '' }) : undefined} />
   ) : null;
 
   const about = (
@@ -133,7 +146,7 @@ export function ScrollProfile({ person, me, isMe, onLike, onReport, onBlock, hea
   );
 
   // Hinge-style order: photo, prompt, photo, about, photo, prompt, photo, prompt, the rest.
-  const blocks = [photo(0), prompt(0), photo(1), about, photo(2), prompt(1), photo(3), prompt(2), photo(4), photo(5),
+  const blocks = [photo(0), prompt(0), photo(1), about, photo(2), prompt(1), photo(3), prompt(2), fav, photo(4), photo(5),
     ...prompts.slice(3).map((_, i) => prompt(i + 3)),
     (person.classes.length || person.spots.length) ? campus : null].filter(Boolean);
 
@@ -322,6 +335,7 @@ export function MatchScreen({ me, them, onMessage, onClose }: {
 }
 
 const styles = StyleSheet.create({
+  location: { position: 'absolute', left: 12, top: 12, maxWidth: '80%', flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(14,11,22,0.6)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
   caption: { fontFamily: F.medium, fontSize: 14, color: C.muted, marginTop: 8, paddingHorizontal: 4 },
   likeBtn: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
   prompt: { backgroundColor: C.surface, borderRadius: 20, padding: 20, paddingBottom: 26, borderWidth: 1, borderColor: C.line, minHeight: 120 },
