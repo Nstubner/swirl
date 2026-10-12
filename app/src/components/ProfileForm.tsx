@@ -9,7 +9,7 @@ import { pickAndUploadPhoto, deletePhoto } from '@/lib/photos';
 import { friendlyError, supabase } from '@/lib/supabase';
 import {
   CAMPUS_SPOTS, CLASS_NAME, COURSES, DORMS, GENDERS, GRAD_YEARS, INTERESTS, MAJORS, PROMPT_QUESTIONS, PRONOUNS,
-  SHOW_ME, VISIBILITY, GREEK_ORGS, LOOKING_FOR, ageFrom, type Profile,
+  SHOW_ME, VISIBILITY, GREEK_FRATERNITIES, GREEK_SORORITIES, LOOKING_FOR, ageFrom, greekKindOf, type GreekKind, type Profile,
 } from '@/lib/constants';
 
 type Draft = Pick<Profile, 'name' | 'birthday' | 'gender' | 'show_me' | 'pronouns' | 'major' | 'grad_year' | 'bio' | 'prompts' |
@@ -70,6 +70,7 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
   const [uploading, setUploading] = useState(false);
   const [majorQuery, setMajorQuery] = useState('');
   const [greekQuery, setGreekQuery] = useState('');
+  const [greekKind, setGreekKind] = useState<GreekKind | null>(() => greekKindOf(profile?.greek));
   const [invite, setInvite] = useState('');
   const [inviteDone, setInviteDone] = useState(false);
   const scroll = useRef<ScrollView>(null);
@@ -288,12 +289,21 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
           </View>
           <View>
             <Label>Greek life{d.greek ? `: ${d.greek}` : ' (optional)'}</Label>
-            <Input value={greekQuery} onChangeText={setGreekQuery} placeholder="Search chapters" style={{ marginBottom: 10 }} />
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              <Chip small label="Not in Greek life" selected={!d.greek} onPress={() => set({ greek: null })} />
-              {GREEK_ORGS.filter((g) => g.toLowerCase().includes(greekQuery.trim().toLowerCase())).slice(0, greekQuery ? 30 : 10)
-                .map((g) => <Chip key={g} small label={g} selected={d.greek === g} onPress={() => set({ greek: g })} />)}
+              <Chip small label="Not in Greek life" selected={!greekKind} onPress={() => { setGreekKind(null); set({ greek: null }); }} />
+              <Chip small label="Fraternity" selected={greekKind === 'fraternity'} onPress={() => { setGreekKind('fraternity'); if (greekKindOf(d.greek) !== 'fraternity') set({ greek: null }); }} />
+              <Chip small label="Sorority" selected={greekKind === 'sorority'} onPress={() => { setGreekKind('sorority'); if (greekKindOf(d.greek) !== 'sorority') set({ greek: null }); }} />
             </View>
+            {greekKind && (
+              <View style={{ marginTop: 12 }}>
+                <Input value={greekQuery} onChangeText={setGreekQuery} placeholder={`Search ${greekKind === 'sorority' ? 'sororities' : 'fraternities'}`} style={{ marginBottom: 10 }} />
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {(greekKind === 'sorority' ? GREEK_SORORITIES : GREEK_FRATERNITIES)
+                    .filter((g) => g.toLowerCase().includes(greekQuery.trim().toLowerCase()))
+                    .map((g) => <Chip key={g} small label={g} selected={d.greek === g} onPress={() => set({ greek: g })} />)}
+                </View>
+              </View>
+            )}
             {mode === 'edit' && <Text style={{ fontFamily: F.body, fontSize: 12, color: C.faint, marginTop: 8 }}>Your dorm and chapter count toward team leaderboards, so each can change once per semester.</Text>}
           </View>
           <View>

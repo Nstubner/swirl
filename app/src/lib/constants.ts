@@ -268,21 +268,25 @@ export const LOOKING_FOR: { id: LookingFor; label: string; emoji: string }[] = [
 export const lookingLabel = (id?: string | null) => LOOKING_FOR.find((l) => l.id === id);
 
 /**
- * Greek chapters people can pick. These are national organizations; trim this list to the
- * chapters that actually exist at CU Boulder before launch.
+ * Greek chapters at CU Boulder.
+ * Fraternities: CU Interfraternity Council (colorado.edu/greeks) plus the Boulder IFC (coloradoifc.org).
+ * Sororities: CU Panhellenic Council (colorado.edu/greeks/panhellenic-council-sorority-chapters).
  */
-export const GREEK_ORGS = [
-  // Sororities
-  'Alpha Chi Omega', 'Alpha Delta Pi', 'Alpha Epsilon Phi', 'Alpha Gamma Delta', 'Alpha Omicron Pi', 'Alpha Phi',
-  'Alpha Xi Delta', 'Chi Omega', 'Delta Delta Delta', 'Delta Gamma', 'Delta Zeta', 'Gamma Phi Beta', 'Kappa Alpha Theta',
-  'Kappa Delta', 'Kappa Kappa Gamma', 'Phi Mu', 'Pi Beta Phi', 'Sigma Kappa', 'Zeta Tau Alpha',
-  // Fraternities
-  'Alpha Epsilon Pi', 'Alpha Tau Omega', 'Beta Theta Pi', 'Chi Psi', 'Delta Chi', 'Delta Tau Delta', 'Delta Upsilon',
-  'Kappa Sigma', 'Lambda Chi Alpha', 'Phi Delta Theta', 'Phi Gamma Delta (FIJI)', 'Phi Kappa Psi', 'Pi Kappa Alpha',
-  'Sigma Alpha Epsilon', 'Sigma Chi', 'Sigma Nu', 'Sigma Phi Epsilon', 'Tau Kappa Epsilon', 'Theta Chi', 'Zeta Beta Tau',
-  // Other
-  'Multicultural Greek org', 'Professional / service fraternity',
+export const GREEK_FRATERNITIES = [
+  'Acacia', 'Alpha Delta Phi', 'Alpha Epsilon Pi', 'Alpha Gamma Omega', 'Alpha Kappa Lambda', 'Alpha Phi Delta',
+  'Alpha Sigma Phi', 'Alpha Tau Omega', 'Beta Theta Pi', 'Chi Psi', 'Delta Chi', 'Delta Kappa Epsilon', 'Delta Sigma Phi',
+  'Delta Tau Delta', 'Kappa Alpha Order', 'Lambda Chi Alpha', 'Phi Delta Theta', 'Phi Gamma Delta (FIJI)', 'Phi Kappa Psi',
+  'Phi Kappa Sigma', 'Phi Kappa Tau', 'Pi Kappa Alpha', 'Pi Kappa Phi', 'Sigma Alpha Epsilon', 'Sigma Alpha Mu', 'Sigma Chi',
+  'Sigma Nu', 'Sigma Phi Epsilon', 'Sigma Pi', 'Sigma Tau Gamma', 'Tau Kappa Epsilon', 'Theta Chi', 'Theta Xi', 'Triangle',
+  'Zeta Beta Tau', 'Zeta Psi',
 ];
+export const GREEK_SORORITIES = [
+  'Alpha Chi Omega', 'Alpha Phi', 'Chi Omega', 'Delta Delta Delta', 'Delta Gamma', 'Gamma Phi Beta', 'Kappa Alpha Theta',
+  'Kappa Beta Gamma', 'Kappa Kappa Gamma', 'Phi Sigma Rho', 'Pi Beta Phi',
+];
+export type GreekKind = 'fraternity' | 'sorority';
+export const greekKindOf = (name?: string | null): GreekKind | null =>
+  !name ? null : GREEK_SORORITIES.includes(name) ? 'sorority' : GREEK_FRATERNITIES.includes(name) ? 'fraternity' : null;
 
 export const ICEBREAKERS = [
   'Two truths and a lie, go.',

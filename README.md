@@ -60,7 +60,7 @@ The database sends pushes through Expo using the `pg_net` extension (the schema 
 
 ## Team boards
 
-Dorms and Greek chapters show once they have 5+ members. Points from your own teammates don't count, Greek boards count likes at half, and each person can change their dorm and chapter once per season. Admins can hide a team. Trim `GREEK_ORGS` in `app/src/lib/constants.ts` to the chapters that exist at CU.
+Dorms and Greek chapters show once they have 5+ members. Points from your own teammates don't count, Greek boards count likes at half, and each person can change their dorm and chapter once per season. Admins can hide a team. Chapter lists (`GREEK_FRATERNITIES`, `GREEK_SORORITIES`) are in `app/src/lib/constants.ts`.
 
 ## Not built yet
 
