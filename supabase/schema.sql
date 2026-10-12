@@ -186,6 +186,51 @@ create table if not exists public.admins (
   user_id uuid primary key references auth.users(id) on delete cascade
 );
 
+-- Added in v3 (Hinge-style likes, verification, push, Greek board)
+alter table public.profiles add column if not exists captions            text[] not null default '{}';
+alter table public.profiles add column if not exists looking_for         text;
+alter table public.profiles add column if not exists greek               text;
+alter table public.profiles add column if not exists filters             jsonb not null default '{}'::jsonb;
+alter table public.profiles add column if not exists push_enabled        boolean not null default true;
+alter table public.profiles add column if not exists verified            boolean not null default false;
+alter table public.profiles add column if not exists verification_status text not null default 'none';
+alter table public.profiles add column if not exists verification_photo  text;
+alter table public.profiles add column if not exists verification_pose   text;
+alter table public.profiles add column if not exists dorm_changed_at     timestamptz;
+alter table public.profiles add column if not exists greek_changed_at    timestamptz;
+alter table public.profiles drop constraint if exists profiles_looking_for_check;
+alter table public.profiles add constraint profiles_looking_for_check
+  check (looking_for is null or looking_for in ('serious','casual','unsure','friends'));
+alter table public.profiles drop constraint if exists profiles_verification_status_check;
+alter table public.profiles add constraint profiles_verification_status_check
+  check (verification_status in ('none','pending','approved','rejected'));
+
+alter table public.swipes add column if not exists item    text;     -- 'photo:0', 'prompt:1'
+alter table public.swipes add column if not exists comment text check (char_length(comment) <= 200);
+
+alter table public.messages add column if not exists kind text not null default 'text';
+alter table public.messages drop constraint if exists messages_kind_check;
+alter table public.messages add constraint messages_kind_check check (kind in ('text','like_comment'));
+
+create table if not exists public.push_tokens (
+  token      text primary key,
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  updated_at timestamptz not null default now()
+);
+
+-- Teams (dorms or Greek chapters) an admin has hidden from the boards.
+create table if not exists public.hidden_teams (
+  kind text not null check (kind in ('dorm','greek')),
+  name text not null,
+  primary key (kind, name)
+);
+
+-- pg_net lets the database call Expo's push service directly (no extra server needed).
+do $$ begin
+  create extension if not exists pg_net with schema extensions;
+exception when others then raise notice 'pg_net not available; push notifications disabled';
+end $$;
+
 -- ---------- Helpers ---------------------------------------------------------
 
 -- Swirl runs on Boulder time: "today" resets at midnight Mountain time.
@@ -225,6 +270,38 @@ begin
     exit when not exists (select 1 from profiles where invite_code = c);
   end loop;
   return c;
+end $$;
+
+-- Offensive-word filter for names, bios, prompts, captions, comments and messages.
+create or replace function public.text_ok(t text) returns boolean
+language sql immutable as $$
+  select t is null or not (lower(t) ~ (
+    '(n[i1!|]gg(a|er|uh|az)|f[a@]gg?[o0]t|\mf[a@]g\M|\mretard|\mtr[a@]nn(y|ie)|\mk[i1]ke\M|\msp[i1]c\M|\mch[i1]nk\M|'
+    || '\mwetback|\mcoon\M|\mkys\M|kill yo(u|ur)self|\mrape\M|\mrapist)'
+  ))
+$$;
+
+create or replace function public.check_text(t text) returns void
+language plpgsql immutable as $$
+begin
+  if not text_ok(t) then raise exception 'Please remove offensive language and try again'; end if;
+end $$;
+
+-- Send a push notification to all of a person's phones through Expo. Never fails the caller.
+create or replace function public.send_push(p_user uuid, p_title text, p_body text, p_url text) returns void
+language plpgsql security definer set search_path = public as $$
+declare msgs jsonb;
+begin
+  select jsonb_agg(jsonb_build_object('to', t.token, 'title', p_title, 'body', p_body, 'sound', 'default',
+                                      'data', jsonb_build_object('url', p_url)))
+    into msgs
+  from push_tokens t join profiles p on p.id = t.user_id
+  where t.user_id = p_user and p.push_enabled and not p.banned;
+  if msgs is null then return; end if;
+  perform net.http_post(url := 'https://exp.host/--/api/v2/push/send', body := msgs,
+                        headers := '{"Content-Type": "application/json"}'::jsonb);
+exception when others then
+  raise notice 'push failed: %', sqlerrm;
 end $$;
 
 -- Apply a score change with the 500 floor and log it.
@@ -297,7 +374,27 @@ begin
     new.boost_until := old.boost_until;     new.badges := old.badges;
     new.banned := old.banned;               new.created_at := old.created_at;
     new.last_active_at := old.last_active_at;
+    new.verified := old.verified;           new.verification_status := old.verification_status;
+    new.verification_photo := old.verification_photo;  new.verification_pose := old.verification_pose;
+    new.dorm_changed_at := old.dorm_changed_at;         new.greek_changed_at := old.greek_changed_at;
+    -- Dorm and Greek chapter can each change once per season after you've finished your profile.
+    if old.onboarded and new.dorm is distinct from old.dorm and old.dorm is not null then
+      if old.dorm_changed_at >= season_start() then
+        raise exception 'You can change your dorm once per season';
+      end if;
+      new.dorm_changed_at := now();
+    end if;
+    if old.onboarded and new.greek is distinct from old.greek and old.greek is not null then
+      if old.greek_changed_at >= season_start() then
+        raise exception 'You can change your Greek chapter once per season';
+      end if;
+      new.greek_changed_at := now();
+    end if;
   end if;
+  perform check_text(new.name);
+  perform check_text(new.bio);
+  perform check_text(new.prompts::text);
+  perform check_text(array_to_string(new.captions, ' '));
   return new;
 end $$;
 
@@ -336,6 +433,8 @@ alter table public.events         enable row level security;
 alter table public.reward_claims  enable row level security;
 alter table public.daily_active   enable row level security;
 alter table public.admins         enable row level security;   -- no policies: only server functions read it
+alter table public.push_tokens    enable row level security;   -- no policies: server functions only
+alter table public.hidden_teams   enable row level security;   -- no policies: server functions only
 
 drop policy if exists "read profiles" on public.profiles;
 create policy "read profiles" on public.profiles for select to authenticated
@@ -403,6 +502,19 @@ begin
   update profiles set last_active_at = now() where id = auth.uid();
 end $$;
 
+create or replace function public.register_push(p_token text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null or coalesce(p_token, '') = '' then return; end if;
+  insert into push_tokens (token, user_id) values (p_token, auth.uid())
+    on conflict (token) do update set user_id = excluded.user_id, updated_at = now();
+end $$;
+
+create or replace function public.unregister_push(p_token text) returns void
+language sql security definer set search_path = public as $$
+  delete from push_tokens where token = p_token and user_id = auth.uid()
+$$;
+
 -- ---------- Discover deck ----------------------------------------------------
 
 -- People you haven't swiped on, who you'd see and who'd see you.
@@ -411,23 +523,29 @@ drop function if exists public.get_deck(int);
 create function public.get_deck(p_limit int default 30)
 returns table (id uuid, name text, age int, gender text, pronouns text, major text, grad_year int, bio text,
                prompts jsonb, interests text[], classes text[], dorm text, spots text[], photos text[],
-               tier text, super_liked_me boolean, badges text[])
+               tier text, super_liked_me boolean, badges text[], captions text[], looking_for text, greek text,
+               verified boolean, liked_me_item text, liked_me_comment text)
 language sql stable security definer set search_path = public as $$
   with me as (select * from profiles where id = auth.uid())
   select p.id, p.name, date_part('year', age(p.birthday))::int, p.gender, p.pronouns, p.major, p.grad_year, p.bio,
          p.prompts, p.interests, p.classes, p.dorm, p.spots, p.photos,
          case when p.visibility = 'hidden' then null else tier_for(coalesce(s.score, 1000)) end,
-         exists (select 1 from swipes x where x.swiper_id = p.id and x.target_id = me.id and x.kind = 'super'),
-         p.badges
+         coalesce(x.kind = 'super', false), p.badges, p.captions, p.looking_for, p.greek, p.verified,
+         x.item, x.comment
   from profiles p
   cross join me
   left join scores s on s.user_id = p.id
+  left join swipes x on x.swiper_id = p.id and x.target_id = me.id and x.kind in ('like','super')
   where p.id <> me.id and p.onboarded and not p.paused and not p.banned and not me.paused and not me.banned
     and not exists (select 1 from swipes w where w.swiper_id = me.id and w.target_id = p.id)
     and not is_blocked(me.id, p.id)
     and (me.show_me = 'everyone' or (me.show_me = 'women' and p.gender = 'woman') or (me.show_me = 'men' and p.gender = 'man'))
     and (p.show_me = 'everyone' or (p.show_me = 'women' and me.gender = 'woman') or (p.show_me = 'men' and me.gender = 'man'))
-  order by (exists (select 1 from swipes x where x.swiper_id = p.id and x.target_id = me.id and x.kind = 'super')) desc,
+    -- your filters (Discover → filter button)
+    and (coalesce(jsonb_array_length(me.filters->'years'), 0) = 0 or p.grad_year::text in (select jsonb_array_elements_text(me.filters->'years')))
+    and (coalesce(jsonb_array_length(me.filters->'looking'), 0) = 0 or p.looking_for in (select jsonb_array_elements_text(me.filters->'looking')))
+    and (coalesce((me.filters->>'verified_only')::boolean, false) = false or p.verified)
+  order by coalesce(x.kind = 'super', false) desc,
            (coalesce(p.boost_until, '-infinity') > now()) desc,
            p.created_at desc
   limit p_limit
@@ -438,13 +556,18 @@ drop function if exists public.get_person(uuid);
 create function public.get_person(p_id uuid)
 returns table (id uuid, name text, age int, gender text, pronouns text, major text, grad_year int, bio text,
                prompts jsonb, interests text[], classes text[], dorm text, spots text[], photos text[], tier text,
-               badges text[])
+               badges text[], captions text[], looking_for text, greek text, verified boolean,
+               liked_me_item text, liked_me_comment text, super_liked_me boolean, i_swiped boolean, liked_me boolean)
 language sql stable security definer set search_path = public as $$
   select p.id, p.name, date_part('year', age(p.birthday))::int, p.gender, p.pronouns, p.major, p.grad_year, p.bio,
          p.prompts, p.interests, p.classes, p.dorm, p.spots, p.photos,
          case when p.visibility = 'hidden' and p.id <> auth.uid() then null else tier_for(coalesce(s.score, 1000)) end,
-         p.badges
+         p.badges, p.captions, p.looking_for, p.greek, p.verified,
+         x.item, x.comment, coalesce(x.kind = 'super', false),
+         exists (select 1 from swipes w where w.swiper_id = auth.uid() and w.target_id = p.id),
+         x.swiper_id is not null
   from profiles p left join scores s on s.user_id = p.id
+  left join swipes x on x.swiper_id = p.id and x.target_id = auth.uid() and x.kind in ('like','super')
   where p.id = p_id and (p.id = auth.uid() or (p.onboarded and not p.banned and not is_blocked(auth.uid(), p.id)))
 $$;
 
@@ -456,12 +579,13 @@ $$;
 -- Pass received −2. Floor 500.
 -- Super Likes: 1 free per day (Boulder time) plus any you've earned from invites.
 
-create or replace function public.swipe(p_target uuid, p_kind text)
+drop function if exists public.swipe(uuid, text);
+create or replace function public.swipe(p_target uuid, p_kind text, p_item text default null, p_comment text default null)
 returns json language plpgsql security definer set search_path = public as $$
 declare
   me uuid := auth.uid();
   my_score int; their_score int; base int; mult numeric; ev numeric; n_recent int; n_likes int; delta int;
-  used int; mutual boolean; mid uuid; a uuid; b uuid;
+  used int; mutual boolean; mid uuid; a uuid; b uuid; their swipes; my_name text; their_name text;
 begin
   if me is null then raise exception 'Not signed in'; end if;
   if p_kind not in ('like','super','pass') then raise exception 'Bad swipe'; end if;
@@ -479,7 +603,10 @@ begin
     end if;
   end if;
 
-  insert into swipes (swiper_id, target_id, kind) values (me, p_target, p_kind)
+  p_comment := nullif(trim(p_comment), '');
+  if p_kind = 'pass' then p_comment := null; p_item := null; end if;
+  perform check_text(p_comment);
+  insert into swipes (swiper_id, target_id, kind, item, comment) values (me, p_target, p_kind, p_item, left(p_comment, 200))
     on conflict (swiper_id, target_id) do nothing;
   if not found then return json_build_object('matched', false, 'duplicate', true); end if;
 
@@ -503,7 +630,20 @@ begin
     if mutual then
       a := least(me, p_target); b := greatest(me, p_target);
       insert into matches (user_a, user_b) values (a, b) on conflict (user_a, user_b) do nothing returning id into mid;
-      if mid is null then select id into mid from matches where user_a = a and user_b = b; end if;
+      if mid is null then
+        select id into mid from matches where user_a = a and user_b = b;
+      else
+        -- Like comments become the first messages of the chat (theirs first, it came earlier).
+        select * into their from swipes where swiper_id = p_target and target_id = me;
+        if their.comment is not null then
+          insert into messages (match_id, sender_id, body, kind, created_at) values (mid, p_target, their.comment, 'like_comment', now() - interval '1 second');
+        end if;
+        if p_comment is not null then
+          insert into messages (match_id, sender_id, body, kind) values (mid, me, p_comment, 'like_comment');
+        end if;
+        select name into my_name from profiles where id = me;
+        perform send_push(p_target, 'It''s a Swirl!', 'You and ' || coalesce(my_name, 'someone') || ' liked each other.', '/chat/' || mid);
+      end if;
       return json_build_object('matched', true, 'match_id', mid);
     end if;
   end if;
@@ -514,10 +654,14 @@ end $$;
 -- Real conversation: +5 each once you've both sent at least 5 messages.
 create or replace function public.on_message() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare m matches; ca int; cb int;
+declare m matches; ca int; cb int; other uuid; sender_name text;
 begin
   select * into m from matches where id = new.match_id for update;
   update matches set last_message_at = new.created_at where id = m.id;
+  if new.kind <> 'text' then return new; end if;   -- like comments don't earn bonuses or pings
+  other := case when new.sender_id = m.user_a then m.user_b else m.user_a end;
+  select name into sender_name from profiles where id = new.sender_id;
+  perform send_push(other, coalesce(sender_name, 'New message'), left(new.body, 120), '/chat/' || m.id);
   if new.created_at - m.created_at <= interval '24 hours' then
     if new.sender_id = m.user_a and not m.a_bonus then
       update matches set a_bonus = true where id = m.id;
@@ -538,6 +682,18 @@ begin
   end if;
   return new;
 end $$;
+
+create or replace function public.check_message() returns trigger
+language plpgsql as $$
+begin
+  perform check_text(new.body);
+  if current_user in ('authenticated', 'anon') then new.kind := 'text'; end if;
+  return new;
+end $$;
+
+drop trigger if exists messages_before_insert on public.messages;
+create trigger messages_before_insert before insert on public.messages
+  for each row execute function public.check_message();
 
 drop trigger if exists messages_after_insert on public.messages;
 create trigger messages_after_insert after insert on public.messages
@@ -626,6 +782,63 @@ begin
     on conflict (user_id, reward) do update set size = excluded.size, contact = excluded.contact;
 end $$;
 
+-- "Likes you" is unlocked by inviting 3 friends, during events, or for admins.
+create or replace function public.likes_unlocked(p_user uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select invites >= 3 from profiles where id = p_user), false)
+      or exists (select 1 from events where now() >= starts_at and now() < ends_at)
+      or exists (select 1 from admins where user_id = p_user)
+$$;
+
+-- People who liked you that you haven't answered yet (empty while locked).
+create or replace function public.get_likes_me()
+returns table (id uuid, name text, age int, photo text, tier text, kind text, item text, comment text, liked_at timestamptz, verified boolean)
+language sql stable security definer set search_path = public as $$
+  select p.id, p.name, date_part('year', age(p.birthday))::int, p.photos[1],
+         case when p.visibility = 'hidden' then null else tier_for(coalesce(s.score, 1000)) end,
+         x.kind, x.item, x.comment, x.created_at, p.verified
+  from swipes x join profiles p on p.id = x.swiper_id left join scores s on s.user_id = p.id
+  where x.target_id = auth.uid() and x.kind in ('like','super') and likes_unlocked(auth.uid())
+    and p.onboarded and not p.banned and not is_blocked(auth.uid(), p.id)
+    and not exists (select 1 from swipes y where y.swiper_id = auth.uid() and y.target_id = p.id)
+  order by (x.kind = 'super') desc, x.created_at desc
+$$;
+
+-- Photo verification: the app uploads a selfie copying a pose; an admin compares it with the profile photos.
+create or replace function public.submit_verification(p_path text, p_pose text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then raise exception 'Not signed in'; end if;
+  if split_part(p_path, '/', 1) <> auth.uid()::text then raise exception 'Bad upload'; end if;
+  update profiles set verification_status = 'pending', verification_photo = p_path, verification_pose = p_pose
+   where id = auth.uid() and not verified;
+end $$;
+
+-- Your week on Swirl (shown on the Profile tab every week).
+create or replace function public.get_weekly_recap() returns json
+language sql stable security definer set search_path = public as $$
+  with me as (select id from profiles where id = auth.uid()),
+  wk as (select coalesce(sum(delta) filter (where reason <> 'season'), 0) as pts,
+                count(*) filter (where reason in ('like','super')) as likes,
+                count(*) filter (where reason = 'super') as supers,
+                count(*) filter (where reason = 'convo') as convos,
+                count(*) filter (where reason = 'date') as dates
+         from score_events where user_id = auth.uid() and created_at >= now() - interval '7 days'),
+  board as (
+    select p.id, coalesce(s.score, 1000) as score,
+           coalesce(s.score, 1000) - coalesce((select sum(delta) from score_events e where e.user_id = p.id and e.reason <> 'season'
+                                                 and e.created_at >= greatest(now() - interval '7 days', season_start())), 0) as score_then
+    from profiles p left join scores s on s.user_id = p.id where p.onboarded and not p.banned
+  )
+  select json_build_object(
+    'points', wk.pts, 'likes', wk.likes, 'supers', wk.supers, 'convos', wk.convos, 'dates', wk.dates,
+    'matches', (select count(*) from matches m where auth.uid() in (m.user_a, m.user_b) and m.created_at >= now() - interval '7 days'),
+    'rank_now', (select count(*) + 1 from board b where b.score > (select score from board where id = auth.uid())),
+    'rank_then', (select count(*) + 1 from board b where b.score_then > (select score_then from board where id = auth.uid())),
+    'total', (select count(*) from board)
+  ) from wk
+$$;
+
 -- Everything the app needs about "me" beyond the profile row.
 create or replace function public.get_extras() returns json
 language sql stable security definer set search_path = public as $$
@@ -642,6 +855,13 @@ language sql stable security definer set search_path = public as $$
     'badges', p.badges,
     'banned', p.banned,
     'hoodie_claimed', exists (select 1 from reward_claims where user_id = p.id and reward = 'hoodie'),
+    'verified', p.verified,
+    'verification_status', p.verification_status,
+    'likes_count', (select count(*) from swipes x where x.target_id = p.id and x.kind in ('like','super')
+                      and not exists (select 1 from swipes y where y.swiper_id = p.id and y.target_id = x.swiper_id)
+                      and exists (select 1 from profiles q where q.id = x.swiper_id and q.onboarded and not q.banned)
+                      and not is_blocked(p.id, x.swiper_id))::int,
+    'likes_unlocked', likes_unlocked(p.id),
     'event', (select json_build_object('name', e.name, 'description', e.description, 'multiplier', e.multiplier, 'ends_at', e.ends_at)
               from events e where now() >= e.starts_at and now() < e.ends_at order by e.multiplier desc limit 1),
     'next_event', (select json_build_object('name', e.name, 'description', e.description, 'multiplier', e.multiplier, 'starts_at', e.starts_at)
@@ -696,23 +916,51 @@ language sql stable security definer set search_path = public as $$
   order by r_now
 $$;
 
--- Dorm vs dorm: average points gained this week per member (dorms with 3+ people).
+-- Team boards (dorms and Greek chapters). Anti-cheat:
+--   points that came from your own teammates don't count, and a team needs 5+ members.
+-- Greek scores weight likes at half, so conversations and dates matter most.
+create or replace function public.team_points(p_user uuid, p_kind text) returns int
+language sql stable security definer set search_path = public as $$
+  select coalesce(round(sum(case when p_kind = 'greek' and e.reason in ('like','super','pass') then e.delta * 0.5 else e.delta end)), 0)::int
+  from score_events e
+  join profiles me on me.id = p_user
+  left join profiles src on src.id = e.source_user_id
+  where e.user_id = p_user and e.reason <> 'season' and e.created_at >= now() - interval '7 days'
+    and not coalesce(case when p_kind = 'dorm' then src.dorm = me.dorm else src.greek = me.greek end, false)
+$$;
+
 create or replace function public.get_dorm_board()
 returns table (rank int, dorm text, members int, avg_week int, is_mine boolean)
 language sql stable security definer set search_path = public as $$
   with people as (
-    select p.dorm,
-           coalesce((select sum(delta) from score_events e where e.user_id = p.id and e.reason <> 'season'
-                       and e.created_at >= now() - interval '7 days'), 0) as week
+    select p.dorm, team_points(p.id, 'dorm') as week
     from profiles p
     where p.onboarded and not p.banned and not p.paused and p.dorm is not null and p.dorm <> ''
+      and not exists (select 1 from hidden_teams h where h.kind = 'dorm' and h.name = p.dorm)
   ),
   dorms as (
-    select dorm, count(*)::int as members, round(avg(week))::int as avg_week from people group by dorm having count(*) >= 3
+    select dorm, count(*)::int as members, round(avg(week))::int as avg_week from people group by dorm having count(*) >= 5
   )
   select (rank() over (order by avg_week desc, dorm))::int, dorm, members, avg_week,
          dorm = (select dorm from profiles where id = auth.uid())
   from dorms order by 1
+$$;
+
+create or replace function public.get_greek_board()
+returns table (rank int, chapter text, members int, avg_week int, is_mine boolean)
+language sql stable security definer set search_path = public as $$
+  with people as (
+    select p.greek, team_points(p.id, 'greek') as week
+    from profiles p
+    where p.onboarded and not p.banned and not p.paused and p.greek is not null and p.greek <> ''
+      and not exists (select 1 from hidden_teams h where h.kind = 'greek' and h.name = p.greek)
+  ),
+  chapters as (
+    select greek, count(*)::int as members, round(avg(week))::int as avg_week from people group by greek having count(*) >= 5
+  )
+  select (rank() over (order by avg_week desc, greek))::int, greek, members, avg_week,
+         greek = (select greek from profiles where id = auth.uid())
+  from chapters order by 1
 $$;
 
 -- My own score card for this season.
@@ -808,6 +1056,12 @@ begin
                      from (select name, email, invites from profiles where invites > 0 order by invites desc limit 10) x),
     'reports_open', (select count(*) from reports where status = 'open'),
     'claims_open',  (select count(*) from reward_claims where status = 'new'),
+    'verifications_pending', (select count(*) from profiles where verification_status = 'pending'),
+    'verified',     (select count(*) from profiles where verified),
+    'push_users',   (select count(distinct user_id) from push_tokens),
+    'looking_for',  (select coalesce(json_object_agg(l, c), '{}') from
+                       (select coalesce(looking_for, 'unknown') l, count(*) c from profiles where onboarded group by 1) x),
+    'like_comments', (select count(*) from swipes where comment is not null),
     'season',     (select json_build_object('id', id, 'name', name, 'started_at', started_at) from seasons where ended_at is null order by id desc limit 1),
     'events',     (select coalesce(json_agg(json_build_object('id', id, 'name', name, 'description', description, 'multiplier', multiplier,
                                                               'starts_at', starts_at, 'ends_at', ends_at) order by starts_at), '[]')
@@ -923,6 +1177,61 @@ begin
   delete from events where id = p_id and starts_at > now();
 end $$;
 
+create or replace function public.admin_verifications()
+returns table (user_id uuid, name text, email text, photos text[], selfie text, pose text, last_active_at timestamptz)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'Admins only'; end if;
+  return query
+  select p.id, p.name, p.email, p.photos, p.verification_photo, p.verification_pose, p.last_active_at
+  from profiles p where p.verification_status = 'pending' order by p.last_active_at desc nulls last;
+end $$;
+
+create or replace function public.admin_review_verification(p_user uuid, p_approve boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'Admins only'; end if;
+  update profiles set verified = p_approve, verification_status = case when p_approve then 'approved' else 'rejected' end
+   where id = p_user;
+  perform send_push(p_user, case when p_approve then 'You''re verified ✓' else 'Verification didn''t go through' end,
+                    case when p_approve then 'Your profile now has a blue check.' else 'Try again with a clear selfie copying the pose.' end,
+                    '/profile');
+end $$;
+
+-- Send a push notification to everyone (e.g. "Swirl Night starts now").
+create or replace function public.admin_notify_all(p_title text, p_body text) returns int
+language plpgsql security definer set search_path = public as $$
+declare u uuid; n int := 0;
+begin
+  if not is_admin() then raise exception 'Admins only'; end if;
+  for u in select distinct t.user_id from push_tokens t join profiles p on p.id = t.user_id where p.push_enabled and not p.banned loop
+    perform send_push(u, p_title, p_body, '/discover');
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
+create or replace function public.admin_teams()
+returns table (kind text, name text, members int, hidden boolean)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'Admins only'; end if;
+  return query
+  select t.kind, t.name, t.members::int, exists (select 1 from hidden_teams h where h.kind = t.kind and h.name = t.name)
+  from (select 'dorm'::text kind, dorm name, count(*) members from profiles where onboarded and dorm is not null group by dorm
+        union all
+        select 'greek', greek, count(*) from profiles where onboarded and greek is not null group by greek) t
+  order by t.kind, t.members desc;
+end $$;
+
+create or replace function public.admin_hide_team(p_kind text, p_name text, p_hidden boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'Admins only'; end if;
+  if p_hidden then insert into hidden_teams values (p_kind, p_name) on conflict do nothing;
+  else delete from hidden_teams where kind = p_kind and name = p_name; end if;
+end $$;
+
 -- ---------- Photos storage bucket --------------------------------------------
 
 insert into storage.buckets (id, name, public) values ('photos', 'photos', true) on conflict (id) do nothing;
@@ -934,6 +1243,17 @@ create policy "upload own photos" on storage.objects for insert to authenticated
 drop policy if exists "delete own photos" on storage.objects;
 create policy "delete own photos" on storage.objects for delete to authenticated
   using (bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- Private bucket for verification selfies: you can upload/see your own; admins can see all.
+insert into storage.buckets (id, name, public) values ('verifications', 'verifications', false) on conflict (id) do nothing;
+
+drop policy if exists "upload own selfie" on storage.objects;
+create policy "upload own selfie" on storage.objects for insert to authenticated
+  with check (bucket_id = 'verifications' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "read selfies" on storage.objects;
+create policy "read selfies" on storage.objects for select to authenticated
+  using (bucket_id = 'verifications' and ((storage.foldername(name))[1] = auth.uid()::text or public.is_admin()));
 
 -- ---------- Realtime for chat --------------------------------------------------
 
@@ -947,14 +1267,19 @@ exception when duplicate_object then null; end $$;
 -- ---------- Permissions -----------------------------------------------------------
 
 grant execute on function
-  public.get_deck(int), public.swipe(uuid, text), public.confirm_date(uuid), public.unmatch(uuid),
+  public.get_deck(int), public.confirm_date(uuid), public.unmatch(uuid),
   public.block_user(uuid), public.delete_my_account(), public.get_leaderboard(text, int), public.get_dorm_board(),
   public.get_my_score(), public.get_matches(), public.get_person(uuid), public.ping(), public.get_extras(),
   public.redeem_invite(text), public.claim_reward(text, text, text), public.is_admin(),
   public.admin_stats(), public.admin_users(text, int), public.admin_reports(text), public.admin_set_banned(uuid, boolean),
   public.admin_resolve_report(bigint, boolean), public.admin_claims(), public.admin_update_claim(bigint, text),
   public.admin_start_season(text), public.admin_create_event(text, text, numeric, timestamptz, timestamptz),
-  public.admin_end_event(int)
+  public.admin_end_event(int),
+  public.swipe(uuid, text, text, text), public.register_push(text), public.unregister_push(text),
+  public.get_likes_me(), public.submit_verification(text, text), public.get_weekly_recap(), public.get_greek_board(),
+  public.admin_verifications(), public.admin_review_verification(uuid, boolean), public.admin_notify_all(text, text),
+  public.admin_teams(), public.admin_hide_team(text, text, boolean)
   to authenticated;
 revoke execute on function public.apply_score(uuid, int, text, uuid) from public, anon, authenticated;
 revoke execute on function public.credit_invite(uuid) from public, anon, authenticated;
+revoke execute on function public.send_push(uuid, text, text, text) from public, anon, authenticated;

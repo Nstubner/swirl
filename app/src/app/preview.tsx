@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Eye, Pencil, X } from 'lucide-react-native';
 import { Button, EmptyState, Loading } from '@/components/ui';
-import { ProfileView } from '@/components/profile';
+import { ScrollProfile } from '@/components/profile';
 import { useAuth } from '@/lib/auth';
 import { Explain } from '@/lib/explain';
 import { supabase, friendlyError } from '@/lib/supabase';
@@ -31,9 +31,9 @@ export default function Preview() {
   const top = Platform.OS === 'ios' ? 14 : insets.top + 10;
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg }}>
+    <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: top + 44 }}>
       {error ? <EmptyState title="Couldn't load your profile" body={error} /> : !me ? <Loading /> : (
-        <ProfileView person={me} me={profile} isMe />
+        <ScrollProfile person={me} me={profile} isMe bottomPad={110} />
       )}
       <Explain k="preview" style={[styles.banner, { top }]}>
         <Eye size={14} color="#fff" />

@@ -7,7 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import Svg, { Circle, Defs, LinearGradient as SvgGradient, Path, Stop } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowDown, ArrowUp, Award, Check, Minus, X } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, Award, BadgeCheck, Check, Minus, X } from 'lucide-react-native';
 import { C, F, GRAD } from '@/lib/theme';
 import { BADGES, tierById, type TierId } from '@/lib/constants';
 import { useExplain } from '@/lib/explain-context';
@@ -189,6 +189,14 @@ export function TierBadge({ tier, onPhoto, small, explain = true }: { tier: Tier
       {badge}
     </Pressable>
   );
+}
+
+/** Blue check for verified profiles. Tap to explain. */
+export function VerifiedCheck({ size = 18, explain = true }: { size?: number; explain?: boolean }) {
+  const ex = useExplain();
+  const icon = <BadgeCheck size={size} color="#fff" fill="#3B82F6" />;
+  if (!explain) return icon;
+  return <Pressable onPress={() => ex('verified')} hitSlop={8} accessibilityLabel="Verified">{icon}</Pressable>;
 }
 
 /** Founding Member / Swirl Founder badges. */

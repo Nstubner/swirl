@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Crown, EyeOff, Home } from 'lucide-react-native';
+import { Crown, EyeOff, Home, Users } from 'lucide-react-native';
 import { Avatar, Button, Chip, EmptyState, Loading, Movement, Screen, Segmented, Sheet, TierBadge } from '@/components/ui';
 import EventBanner from '@/components/EventBanner';
 import { Explain, InfoButton } from '@/lib/explain';
@@ -17,8 +17,8 @@ type Row = {
   rank: number; user_id: string; name: string; photo: string | null; grad_year: number | null; tier: TierId; value: number | null;
   move: number; is_me: boolean; visibility: string; total: number; badges: string[];
 };
-type DormRow = { rank: number; dorm: string; members: number; avg_week: number; is_mine: boolean };
-type Mode = 'campus' | 'week' | 'class' | 'dorms';
+type TeamRow = { rank: number; name: string; members: number; avg_week: number; is_mine: boolean };
+type Mode = 'campus' | 'week' | 'class' | 'dorms' | 'greek';
 
 export default function Leaderboard() {
   const { profile } = useAuth();
@@ -27,15 +27,18 @@ export default function Leaderboard() {
   const [mode, setMode] = useState<Mode>('campus');
   const [grad, setGrad] = useState<number>(profile?.grad_year ?? 2029);
   const [rows, setRows] = useState<Row[] | null>(null);
-  const [dorms, setDorms] = useState<DormRow[] | null>(null);
+  const [teams, setTeams] = useState<TeamRow[] | null>(null);
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [recap, setRecap] = useState(false);
 
   const load = useCallback(async () => {
-    if (mode === 'dorms') {
-      const { data, error: e } = await supabase.rpc('get_dorm_board');
-      if (e) setError(friendlyError(e)); else { setError(''); setDorms((data ?? []) as DormRow[]); }
+    if (mode === 'dorms' || mode === 'greek') {
+      const { data, error: e } = await supabase.rpc(mode === 'dorms' ? 'get_dorm_board' : 'get_greek_board');
+      if (e) { setError(friendlyError(e)); return; }
+      setError('');
+      setTeams(((data ?? []) as { rank: number; dorm?: string; chapter?: string; members: number; avg_week: number; is_mine: boolean }[])
+        .map((r) => ({ rank: r.rank, name: (r.dorm ?? r.chapter) as string, members: r.members, avg_week: r.avg_week, is_mine: r.is_mine })));
       return;
     }
     const { data, error: e } = await supabase.rpc('get_leaderboard', { p_mode: mode === 'week' ? 'week' : 'campus', p_grad: mode === 'class' ? grad : null });
@@ -96,24 +99,26 @@ export default function Leaderboard() {
   );
 
   let body;
-  if (mode === 'dorms') {
-    body = dorms === null && !error ? <Loading /> : error ? <EmptyState title="Couldn't load dorms" body={error} /> : !dorms?.length ? (
-      <EmptyState icon={<Home size={26} color={C.text} />} title="No dorms on the board yet"
-        body="A dorm shows up once 3 people from it are on Swirl. Invite your floor."
-        action={<Button label="Invite friends" onPress={() => router.push('/invite')} />} />
+  if (mode === 'dorms' || mode === 'greek') {
+    const greek = mode === 'greek';
+    body = teams === null && !error ? <Loading /> : error ? <EmptyState title="Couldn't load this board" body={error} /> : !teams?.length ? (
+      <EmptyState icon={greek ? <Users size={26} color={C.text} /> : <Home size={26} color={C.text} />}
+        title={greek ? 'No chapters on the board yet' : 'No dorms on the board yet'}
+        body={greek ? 'A chapter shows up once 5 members are on Swirl. Add yours in Edit profile.' : 'A dorm shows up once 5 people from it are on Swirl. Invite your floor.'}
+        action={<Button label={greek ? 'Edit profile' : 'Invite friends'} onPress={() => router.push(greek ? '/edit' : '/invite')} />} />
     ) : (
       <FlatList
-        data={dorms}
-        keyExtractor={(d) => d.dorm}
+        data={teams}
+        keyExtractor={(d) => d.name}
         contentContainerStyle={{ padding: 8, paddingBottom: 40 }}
         refreshControl={<RefreshControl refreshing={refreshing} tintColor={C.pink} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}
-        ListHeaderComponent={<Explain k="dorms"><Text style={styles.note}>Average points gained per member this week. Tap to learn more.</Text></Explain>}
+        ListHeaderComponent={<Explain k={greek ? 'greek' : 'dorms'}><Text style={styles.note}>Average points per member this week · tap for how it works</Text></Explain>}
         renderItem={({ item: d }) => (
           <View style={[styles.row, d.is_mine && { borderColor: C.pink, borderWidth: 1.5 }]}>
             <Text style={styles.rank}>{d.rank}</Text>
-            {d.rank === 1 ? <Crown size={18} color="#FFC93C" fill="#FFC93C" /> : <Home size={18} color={C.muted} />}
+            {d.rank === 1 ? <Crown size={18} color="#FFC93C" fill="#FFC93C" /> : greek ? <Users size={18} color={C.muted} /> : <Home size={18} color={C.muted} />}
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowName} numberOfLines={1}>{d.dorm}{d.is_mine ? ' (yours)' : ''}</Text>
+              <Text style={styles.rowName} numberOfLines={1}>{d.name}{d.is_mine ? ' (yours)' : ''}</Text>
               <Text style={styles.rowSub}>{d.members} on Swirl</Text>
             </View>
             <Text style={styles.value}>{signed(d.avg_week)}</Text>
@@ -171,7 +176,7 @@ export default function Leaderboard() {
       <EventBanner />
       <View style={{ paddingHorizontal: 16, gap: 10 }}>
         <Segmented value={mode} onChange={setMode} options={[
-          { id: 'campus', label: 'Campus' }, { id: 'week', label: 'Week' }, { id: 'class', label: 'Class' }, { id: 'dorms', label: 'Dorms' },
+          { id: 'campus', label: 'Campus' }, { id: 'week', label: 'Week' }, { id: 'class', label: 'Class' }, { id: 'dorms', label: 'Dorms' }, { id: 'greek', label: 'Greek' },
         ]} />
         {mode === 'class' && (
           <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -180,7 +185,7 @@ export default function Leaderboard() {
         )}
       </View>
       {body}
-      {me && mode !== 'dorms' && (
+      {me && mode !== 'dorms' && mode !== 'greek' && (
         <Pressable style={styles.mine} onPress={() => explain('rank', me.rank > 25 ? { top: topPct(me.rank, me.total) } : undefined)}>
           <View style={{ alignItems: 'center', minWidth: 64 }}>
             <Text style={{ fontFamily: F.semibold, fontSize: 11, color: C.cardMuted }}>Your rank</Text>

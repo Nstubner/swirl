@@ -37,8 +37,15 @@
         "expo-image-picker",
         {
           "photosPermission": "Swirl uses your photos so you can add them to your profile.",
-          "cameraPermission": false,
+          "cameraPermission": "Swirl uses your camera for a quick selfie to verify your profile.",
           "microphonePermission": false
+        }
+      ],
+      "expo-sharing",
+      [
+        "expo-notifications",
+        {
+          "color": "#FF3D8B"
         }
       ]
     ],

@@ -1,4 +1,7 @@
-import { Stack } from 'expo-router';
+import { useEffect } from 'react';
+import { Platform } from 'react-native';
+import { Stack, router } from 'expo-router';
+import * as Notifications from 'expo-notifications';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useFonts, BricolageGrotesque_700Bold, BricolageGrotesque_800ExtraBold } from '@expo-google-fonts/bricolage-grotesque';
@@ -10,8 +13,26 @@ import { Loading } from '@/components/ui';
 import Suspended from '@/components/Suspended';
 import { C } from '@/lib/theme';
 
+/** Tapping a notification opens the right screen (a chat, a match, Discover). */
+function useNotificationTaps(enabled: boolean) {
+  useEffect(() => {
+    if (!enabled || Platform.OS === 'web') return;
+    const open = (r: Notifications.NotificationResponse | null) => {
+      const url = r?.notification.request.content.data?.url;
+      if (typeof url === 'string' && r?.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER) {
+        router.push(url as never);
+        Notifications.clearLastNotificationResponseAsync().catch(() => {});
+      }
+    };
+    Notifications.getLastNotificationResponseAsync().then(open).catch(() => {});
+    const sub = Notifications.addNotificationResponseReceivedListener(open);
+    return () => sub.remove();
+  }, [enabled]);
+}
+
 function RootStack() {
   const { session, profile, loading } = useAuth();
+  useNotificationTaps(!loading && !!session && !!profile?.onboarded);
   if (loading) return <Loading />;
   const signedIn = !!session;
   const onboarded = !!profile?.onboarded;
@@ -34,6 +55,8 @@ function RootStack() {
         <Stack.Screen name="edit" />
         <Stack.Screen name="invite" />
         <Stack.Screen name="admin" />
+        <Stack.Screen name="likes" />
+        <Stack.Screen name="verify-photo" />
       </Stack.Protected>
     </Stack>
   );

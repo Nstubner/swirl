@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View, useWindowDimensions } from 'react-native';
+import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import Svg, { Rect } from 'react-native-svg';
-import { Ban, Check, Search, ShieldCheck, Undo2 } from 'lucide-react-native';
+import { Ban, BadgeCheck, Check, Eye, EyeOff, Search, ShieldCheck, Undo2, X } from 'lucide-react-native';
 import { Avatar, Button, Chip, EmptyState, Input, Loading } from './ui';
 import { supabase, friendlyError } from '@/lib/supabase';
-import { CLASS_NAME, fmt } from '@/lib/constants';
+import { CLASS_NAME, LOOKING_FOR, fmt } from '@/lib/constants';
 import { C, F } from '@/lib/theme';
 
 /* ---------- shared bits ---------- */
@@ -77,9 +78,10 @@ type Stats = {
   matches: number; matches_messaged: number; matches_both: number; convos: number; dates: number; messages: number;
   referred: number; top_inviters: { name: string | null; email: string; invites: number }[];
   reports_open: number; claims_open: number;
+  verifications_pending: number; verified: number; push_users: number; looking_for: Record<string, number>; like_comments: number;
 };
 
-export function Overview({ onJump }: { onJump: (tab: 'reports' | 'rewards') => void }) {
+export function Overview({ onJump }: { onJump: (tab: 'reports' | 'rewards' | 'verify') => void }) {
   const { width } = useWindowDimensions();
   const [st, setSt] = useState<Stats | null>(null);
   const [error, setError] = useState('');
@@ -105,6 +107,7 @@ export function Overview({ onJump }: { onJump: (tab: 'reports' | 'rewards') => v
         <View style={{ flexDirection: 'row', gap: 8 }}>
           {st.reports_open > 0 && <Button small variant="danger" label={`${st.reports_open} open report${st.reports_open > 1 ? 's' : ''}`} onPress={() => onJump('reports')} />}
           {st.claims_open > 0 && <Button small label={`${st.claims_open} hoodie claim${st.claims_open > 1 ? 's' : ''}`} onPress={() => onJump('rewards')} />}
+          {st.verifications_pending > 0 && <Button small variant="secondary" label={`${st.verifications_pending} to verify`} onPress={() => onJump('verify')} />}
         </View>
       )}
 
@@ -157,6 +160,17 @@ export function Overview({ onJump }: { onJump: (tab: 'reports' | 'rewards') => v
         ))}
       </Card>
 
+      <Card title="Profiles">
+        <View style={s.grid}>
+          <Tile label="Verified" value={fmt(st.verified)} sub={`${pct(st.verified, st.onboarded)} of profiles`} />
+          <Tile label="Notifications on" value={fmt(st.push_users)} sub={`${pct(st.push_users, st.onboarded)} of profiles`} />
+        </View>
+        <Text style={[s.small, { marginTop: 14 }]}>Looking for</Text>
+        {LOOKING_FOR.map((l) => (
+          <View key={l.id} style={s.line}><Text style={s.lineLabel}>{l.emoji} {l.label}</Text><Text style={s.lineValue}>{st.looking_for?.[l.id] ?? 0}</Text></View>
+        ))}
+      </Card>
+
       <Card title="Swiping and matching">
         <View style={s.grid}>
           <Tile label="Swipes" value={fmt(swipes)} sub={`${fmt(st.swipes.today)} today`} />
@@ -167,6 +181,7 @@ export function Overview({ onJump }: { onJump: (tab: 'reports' | 'rewards') => v
           <Tile label="Real conversations" value={fmt(st.convos)} sub="both sent 5+ messages" />
           <Tile label="Dates confirmed" value={fmt(st.dates)} sub={`${pct(st.dates, st.matches)} of matches`} />
           <Tile label="Messages" value={fmt(st.messages)} />
+          <Tile label="Likes with a comment" value={fmt(st.like_comments)} sub={`${pct(st.like_comments, st.swipes.like + st.swipes.super)} of likes`} />
         </View>
       </Card>
 
@@ -312,6 +327,63 @@ export function Users() {
   );
 }
 
+/* ---------- Verifications ---------- */
+
+type Pending = { user_id: string; name: string | null; email: string; photos: string[]; selfie: string; pose: string | null };
+
+async function fetchPending() {
+  const { data, error } = await supabase.rpc('admin_verifications');
+  if (error) return { error: friendlyError(error), list: [] as Pending[], urls: {} as Record<string, string> };
+  const list = (data ?? []) as Pending[];
+  const urls: Record<string, string> = {};
+  await Promise.all(list.map(async (r) => {
+    const { data: u } = await supabase.storage.from('verifications').createSignedUrl(r.selfie, 3600);
+    if (u?.signedUrl) urls[r.user_id] = u.signedUrl;
+  }));
+  return { error: '', list, urls };
+}
+
+export function Verifications() {
+  const [rows, setRows] = useState<Pending[] | null>(null);
+  const [urls, setUrls] = useState<Record<string, string>>({});
+  const apply = useCallback((r: Awaited<ReturnType<typeof fetchPending>>) => {
+    if (r.error) { Alert.alert('Error', r.error); return; }
+    setRows(r.list);
+    setUrls(r.urls);
+  }, []);
+  const load = useCallback(() => fetchPending().then(apply), [apply]);
+  useEffect(() => { fetchPending().then(apply); }, [apply]);
+  const review = async (r: Pending, approve: boolean) => {
+    const { error } = await supabase.rpc('admin_review_verification', { p_user: r.user_id, p_approve: approve });
+    if (error) Alert.alert('Error', friendlyError(error)); else load();
+  };
+  if (!rows) return <Loading />;
+  return (
+    <FlatList data={rows} keyExtractor={(r) => r.user_id} contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 60 }}
+      ListEmptyComponent={<EmptyState icon={<BadgeCheck size={26} color={C.text} />} title="Nothing to verify" body="Selfies people submit show up here." />}
+      renderItem={({ item: r }) => (
+        <View style={s.card}>
+          <Text style={s.cardTitle}>{r.name ?? r.email}</Text>
+          <Text style={s.small}>{r.email} · asked to do {r.pose ?? 'a pose'}</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginTop: 10 }}>
+            <View>
+              <View style={[s.verifyImg, { borderColor: C.pink, borderWidth: 2 }]}>
+                {urls[r.user_id] ? <Image source={{ uri: urls[r.user_id] }} style={{ flex: 1 }} contentFit="cover" /> : null}
+              </View>
+              <Text style={[s.small, { textAlign: 'center' }]}>Selfie</Text>
+            </View>
+            {r.photos.map((ph) => <Image key={ph} source={{ uri: ph }} style={s.verifyImg} contentFit="cover" />)}
+          </ScrollView>
+          <Text style={[s.small, { marginTop: 8 }]}>Approve if it’s clearly the same person and they’re doing the pose.</Text>
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+            <Button small variant="secondary" label="Reject" icon={<X size={14} color={C.text} />} onPress={() => review(r, false)} style={{ flex: 1 }} />
+            <Button small label="Approve" icon={<Check size={14} color={C.text} />} onPress={() => review(r, true)} style={{ flex: 1 }} />
+          </View>
+        </View>
+      )} />
+  );
+}
+
 /* ---------- Rewards ---------- */
 
 type Claim = { id: number; created_at: string; reward: string; size: string | null; contact: string | null; status: string; name: string | null; email: string; invites: number };
@@ -360,6 +432,27 @@ export function SeasonsEvents() {
   const [start, setStart] = useState<'now' | 'tonight' | 'tomorrow'>('tonight');
   const [hours, setHours] = useState(3);
   const [busy, setBusy] = useState(false);
+  const [notify, setNotify] = useState(true);
+  const [teams, setTeams] = useState<{ kind: string; name: string; members: number; hidden: boolean }[]>([]);
+  const [pushTitle, setPushTitle] = useState('');
+  const [pushBody, setPushBody] = useState('');
+
+  const loadTeams = useCallback(async () => {
+    const { data } = await supabase.rpc('admin_teams');
+    setTeams((data ?? []) as typeof teams);
+  }, []);
+  useEffect(() => { supabase.rpc('admin_teams').then(({ data }) => setTeams((data ?? []) as typeof teams)); }, []);
+
+  const toggleTeam = async (t: { kind: string; name: string; hidden: boolean }) => {
+    const { error } = await supabase.rpc('admin_hide_team', { p_kind: t.kind, p_name: t.name, p_hidden: !t.hidden });
+    if (error) Alert.alert('Error', friendlyError(error)); else loadTeams();
+  };
+
+  const sendPush = async (title: string, body: string) => {
+    const { data, error } = await supabase.rpc('admin_notify_all', { p_title: title, p_body: body });
+    if (error) Alert.alert('Error', friendlyError(error));
+    else Alert.alert('Sent', `Notification sent to ${data} people.`);
+  };
 
   const load = useCallback(async () => {
     const { data } = await supabase.rpc('admin_stats');
@@ -399,7 +492,12 @@ export function SeasonsEvents() {
       p_name: name.trim(), p_description: desc.trim() || null, p_multiplier: mult, p_starts: starts.toISOString(), p_ends: ends.toISOString(),
     });
     setBusy(false);
-    if (error) Alert.alert('Error', friendlyError(error)); else load();
+    if (error) { Alert.alert('Error', friendlyError(error)); return; }
+    load();
+    if (notify) {
+      const when = start === 'now' ? 'is on now' : start === 'tonight' ? 'tonight at 8' : 'tomorrow at 8';
+      sendPush(`${name.trim()} ${when}`, desc.trim() || `Likes count ${mult}×. Everyone’s on.`);
+    }
   };
 
   const endEvent = async (e: Ev) => {
@@ -433,7 +531,33 @@ export function SeasonsEvents() {
         </View>
         <Text style={[s.small, { marginTop: 10 }]}>Lasts</Text>
         <View style={s.chips}>{[1, 2, 3, 24].map((h) => <Chip key={h} small label={h === 24 ? '24 hours' : `${h}h`} selected={hours === h} onPress={() => setHours(h)} />)}</View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12, gap: 10 }}>
+          <Text style={[s.lineLabel, { fontFamily: F.body }]}>Send everyone a notification</Text>
+          <Switch value={notify} onValueChange={setNotify} trackColor={{ true: C.pink, false: C.surface2 }} thumbColor="#fff" />
+        </View>
         <Button label="Schedule event" onPress={createEvent} loading={busy} disabled={name.trim().length < 2} style={{ marginTop: 14 }} />
+      </Card>
+
+      <Card title="Send a notification" sub="Goes to everyone with notifications on. Use sparingly.">
+        <Input value={pushTitle} onChangeText={setPushTitle} placeholder="Title, e.g. Swirl Night starts in 1 hour" />
+        <Input value={pushBody} onChangeText={setPushBody} placeholder="Message" style={{ marginTop: 8 }} />
+        <Button label="Send to everyone" variant="secondary" style={{ marginTop: 10 }} disabled={pushTitle.trim().length < 3}
+          onPress={() => Alert.alert('Send to everyone?', pushTitle, [{ text: 'Cancel', style: 'cancel' }, { text: 'Send', onPress: () => { sendPush(pushTitle.trim(), pushBody.trim()); setPushTitle(''); setPushBody(''); } }])} />
+      </Card>
+
+      <Card title="Teams on the boards" sub="Hide a dorm or chapter from the leaderboards (for example, if a chapter asks to be removed).">
+        {teams.length === 0 && <Text style={s.small}>No dorms or chapters yet.</Text>}
+        {teams.map((t) => (
+          <View key={`${t.kind}-${t.name}`} style={s.line}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.lineLabel}>{t.name}</Text>
+              <Text style={s.small}>{t.kind === 'greek' ? 'Greek' : 'Dorm'} · {t.members} members{t.hidden ? ' · hidden' : ''}</Text>
+            </View>
+            <Pressable onPress={() => toggleTeam(t)} style={s.iconBtn} accessibilityLabel={t.hidden ? 'Show' : 'Hide'}>
+              {t.hidden ? <EyeOff size={16} color={C.down} /> : <Eye size={16} color={C.text} />}
+            </Pressable>
+          </View>
+        ))}
       </Card>
 
       <Card title="Season" sub={season ? `${season.name} · started ${short(season.started_at)}` : undefined}>
@@ -462,5 +586,6 @@ const s = StyleSheet.create({
   lineValue: { fontFamily: F.bold, fontSize: 14, color: C.text },
   userRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line },
   iconBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: C.surface2, alignItems: 'center', justifyContent: 'center' },
+  verifyImg: { width: 110, height: 138, borderRadius: 12, overflow: 'hidden', backgroundColor: C.surface2 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 },
 });

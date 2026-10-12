@@ -27,3 +27,17 @@ export async function deletePhoto(url: string) {
   if (i < 0) return;
   await supabase.storage.from('photos').remove([url.slice(i + marker.length)]);
 }
+
+/** Take a front-camera selfie and upload it to the private verification bucket. Returns its path. */
+export async function takeVerificationSelfie(userId: string): Promise<string | null> {
+  const perm = await ImagePicker.requestCameraPermissionsAsync();
+  if (!perm.granted) throw new Error('Swirl needs camera access to verify you. You can turn it on in Settings.');
+  const result = await ImagePicker.launchCameraAsync({ cameraType: ImagePicker.CameraType.front, quality: 0.7, allowsEditing: false });
+  if (result.canceled || !result.assets?.length) return null;
+  const asset = result.assets[0];
+  const body = await (await fetch(asset.uri)).arrayBuffer();
+  const path = `${userId}/${Date.now()}.jpg`;
+  const { error } = await supabase.storage.from('verifications').upload(path, body, { contentType: asset.mimeType ?? 'image/jpeg' });
+  if (error) throw error;
+  return path;
+}

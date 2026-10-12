@@ -31,7 +31,17 @@ export type Profile = {
   badges: string[];
   banned: boolean;
   referred_by: string | null;
+  captions: string[];
+  looking_for: LookingFor | null;
+  greek: string | null;
+  filters: Filters;
+  push_enabled: boolean;
+  verified: boolean;
+  verification_status: 'none' | 'pending' | 'approved' | 'rejected';
 };
+
+export type LookingFor = 'serious' | 'casual' | 'unsure' | 'friends';
+export type Filters = { years?: string[]; looking?: LookingFor[]; verified_only?: boolean };
 
 /** A card in Discover (from the get_deck function). Tier is null for Hidden users. */
 export type DeckPerson = {
@@ -52,6 +62,14 @@ export type DeckPerson = {
   tier: TierId | null;
   super_liked_me?: boolean;
   badges?: string[];
+  captions?: string[];
+  looking_for?: LookingFor | null;
+  greek?: string | null;
+  verified?: boolean;
+  liked_me_item?: string | null;
+  liked_me_comment?: string | null;
+  i_swiped?: boolean;
+  liked_me?: boolean;
 };
 
 export type TierId = 'bronze' | 'silver' | 'gold' | 'platinum' | 'diamond';
@@ -228,6 +246,10 @@ export type Extras = {
   badges: string[];
   banned: boolean;
   hoodie_claimed: boolean;
+  verified: boolean;
+  verification_status: 'none' | 'pending' | 'approved' | 'rejected';
+  likes_count: number;
+  likes_unlocked: boolean;
   event: { name: string; description: string | null; multiplier: number; ends_at: string } | null;
   next_event: { name: string; description: string | null; multiplier: number; starts_at: string } | null;
   season: { name: string; started_at: string } | null;
@@ -236,3 +258,45 @@ export type Extras = {
 
 /** "Top 12%" style label. */
 export const topPct = (rank: number, total: number) => `Top ${Math.max(1, Math.ceil((rank / Math.max(1, total)) * 100))}%`;
+
+export const LOOKING_FOR: { id: LookingFor; label: string; emoji: string }[] = [
+  { id: 'serious', label: 'Something serious', emoji: '💞' },
+  { id: 'casual', label: 'Something casual', emoji: '😎' },
+  { id: 'unsure', label: 'Not sure yet', emoji: '🤷' },
+  { id: 'friends', label: 'New friends', emoji: '👋' },
+];
+export const lookingLabel = (id?: string | null) => LOOKING_FOR.find((l) => l.id === id);
+
+/**
+ * Greek chapters people can pick. These are national organizations; trim this list to the
+ * chapters that actually exist at CU Boulder before launch.
+ */
+export const GREEK_ORGS = [
+  // Sororities
+  'Alpha Chi Omega', 'Alpha Delta Pi', 'Alpha Epsilon Phi', 'Alpha Gamma Delta', 'Alpha Omicron Pi', 'Alpha Phi',
+  'Alpha Xi Delta', 'Chi Omega', 'Delta Delta Delta', 'Delta Gamma', 'Delta Zeta', 'Gamma Phi Beta', 'Kappa Alpha Theta',
+  'Kappa Delta', 'Kappa Kappa Gamma', 'Phi Mu', 'Pi Beta Phi', 'Sigma Kappa', 'Zeta Tau Alpha',
+  // Fraternities
+  'Alpha Epsilon Pi', 'Alpha Tau Omega', 'Beta Theta Pi', 'Chi Psi', 'Delta Chi', 'Delta Tau Delta', 'Delta Upsilon',
+  'Kappa Sigma', 'Lambda Chi Alpha', 'Phi Delta Theta', 'Phi Gamma Delta (FIJI)', 'Phi Kappa Psi', 'Pi Kappa Alpha',
+  'Sigma Alpha Epsilon', 'Sigma Chi', 'Sigma Nu', 'Sigma Phi Epsilon', 'Tau Kappa Epsilon', 'Theta Chi', 'Zeta Beta Tau',
+  // Other
+  'Multicultural Greek org', 'Professional / service fraternity',
+];
+
+export const ICEBREAKERS = [
+  'Two truths and a lie, go.',
+  'Best late-night food on the Hill?',
+  'Would you rather: Flagstaff sunrise hike or Pearl St brunch?',
+  'What’s the most overrated spot on campus?',
+  'What’s your go-to karaoke song?',
+  'Rank: Folsom game days, Fox Theatre shows, Chautauqua hikes.',
+  'What’s a class you’d actually recommend?',
+  'Worst roommate story, under 20 words.',
+  'What would your friends say is your most annoying habit?',
+  'If you could teleport anywhere for the weekend, where?',
+  'What song have you had on repeat this week?',
+  'Hot take you’d defend to the end?',
+];
+
+export const VERIFY_POSES = ['a peace sign ✌️', 'a thumbs up 👍', 'your hand on your head', 'pointing at the camera ☝️', 'a wave 👋'];

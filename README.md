@@ -54,8 +54,14 @@ Everyone starts each season at 1,000 (floor 500). Like received +8, Super Like +
 
 Invites: each friend who finishes their profile = +2 Super Likes; 3 = 24h Boost; 5 = Founding Member badge; 10 = Swirl Founder badge + hoodie claim.
 
+## Push notifications
+
+The database sends pushes through Expo using the `pg_net` extension (the schema enables it). Phones only get a push token once the app is linked to an Expo project (`npx eas-cli@latest init`) and running as a real build (TestFlight); in Expo Go it quietly skips this.
+
+## Team boards
+
+Dorms and Greek chapters show once they have 5+ members. Points from your own teammates don't count, Greek boards count likes at half, and each person can change their dorm and chapter once per season. Admins can hide a team. Trim `GREEK_ORGS` in `app/src/lib/constants.ts` to the chapters that exist at CU.
+
 ## Not built yet
 
-Push notifications, group mode, rivalries, weekly recap, discovery filters, privacy policy/terms pages, and an App Review demo account.
-
-Planned anti-cheat for team boards: likes from teammates don't count toward dorm/house scores, dorm changes limited to once per season, minimum 5 members per dorm. Possible Greek houses board (opt-in, scored mostly on conversations and dates).
+Group mode, double dates, daily picks, privacy policy/terms pages, and an App Review demo account.

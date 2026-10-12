@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { Heart } from 'lucide-react-native';
+import { ChevronRight, Heart, Lock } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useExtras } from '@/lib/extras';
 import { Avatar, Button, EmptyState, Loading, Screen } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
 import { supabase, friendlyError } from '@/lib/supabase';
 import { PTS, type TierId } from '@/lib/constants';
 import { Explain, InfoButton } from '@/lib/explain';
-import { C, F } from '@/lib/theme';
+import { C, F, GRAD } from '@/lib/theme';
 
 export type MatchRow = {
   match_id: string; other_id: string; name: string; photo: string | null; tier: TierId | null; created_at: string;
@@ -24,6 +26,8 @@ function ago(iso: string) {
 
 export default function Matches() {
   const { session } = useAuth();
+  const { extras } = useExtras();
+  const likes = extras?.likes_count ?? 0;
   const me = session?.user.id;
   const [rows, setRows] = useState<MatchRow[] | null>(null);
   const [error, setError] = useState('');
@@ -56,6 +60,20 @@ export default function Matches() {
         <Text style={{ fontFamily: F.display, fontSize: 30, color: C.text, flex: 1 }}>Matches</Text>
         <InfoButton k="matches" />
       </View>
+      {likes > 0 && (
+        <Pressable onPress={() => router.push('/likes')} style={{ marginHorizontal: 16, marginBottom: 12 }} accessibilityRole="button">
+          <LinearGradient colors={GRAD} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.likesCard}>
+            <View style={styles.likesIcon}>{extras?.likes_unlocked ? <Heart size={20} color={C.pink} fill={C.pink} /> : <Lock size={18} color={C.pink} />}</View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: F.bold, fontSize: 16, color: '#fff' }}>{likes} {likes === 1 ? 'person likes' : 'people like'} you</Text>
+              <Text style={{ fontFamily: F.body, fontSize: 13, color: 'rgba(255,255,255,0.85)' }}>
+                {extras?.likes_unlocked ? 'Tap to see who' : 'Invite 3 friends to see who'}
+              </Text>
+            </View>
+            <ChevronRight size={20} color="#fff" />
+          </LinearGradient>
+        </Pressable>
+      )}
       {error ? <EmptyState title="Couldn't load matches" body={error} action={<Button label="Try again" onPress={load} />} /> :
         !rows?.length ? (
           <EmptyState icon={<Heart size={28} color={C.text} />} title="No matches yet" body="When you and someone both swipe right, they show up here."
@@ -106,6 +124,8 @@ export default function Matches() {
 }
 
 const styles = StyleSheet.create({
+  likesCard: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 18, padding: 14 },
+  likesIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
   section: { fontFamily: F.bold, fontSize: 13, color: C.muted, paddingHorizontal: 20, marginBottom: 8 },
   freshName: { fontFamily: F.semibold, fontSize: 12, color: C.text, marginTop: 6 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, paddingVertical: 10 },

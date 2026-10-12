@@ -9,11 +9,11 @@ import { pickAndUploadPhoto, deletePhoto } from '@/lib/photos';
 import { friendlyError, supabase } from '@/lib/supabase';
 import {
   CAMPUS_SPOTS, CLASS_NAME, COURSES, DORMS, GENDERS, GRAD_YEARS, INTERESTS, MAJORS, PROMPT_QUESTIONS, PRONOUNS,
-  SHOW_ME, VISIBILITY, ageFrom, type Profile,
+  SHOW_ME, VISIBILITY, GREEK_ORGS, LOOKING_FOR, ageFrom, type Profile,
 } from '@/lib/constants';
 
 type Draft = Pick<Profile, 'name' | 'birthday' | 'gender' | 'show_me' | 'pronouns' | 'major' | 'grad_year' | 'bio' | 'prompts' |
-  'interests' | 'classes' | 'dorm' | 'spots' | 'photos' | 'visibility'>;
+  'interests' | 'classes' | 'dorm' | 'spots' | 'photos' | 'visibility' | 'captions' | 'looking_for' | 'greek'>;
 
 const STEPS = ['birthday', 'basics', 'photos', 'about', 'interests', 'campus', 'visibility'] as const;
 type Step = (typeof STEPS)[number];
@@ -38,6 +38,7 @@ function check(step: Step, d: Draft, bday: { m: string; d: string; y: string }):
     if (!d.grad_year) return 'Choose your graduation year.';
     if (!d.gender) return "Choose how you identify.";
     if (!d.show_me) return 'Choose who you want to see.';
+    if (!d.looking_for) return 'Choose what you’re looking for.';
   }
   if (step === 'photos' && d.photos.length < 2) return 'Add at least 2 photos.';
   if (step === 'about') {
@@ -57,6 +58,7 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
     prompts: profile?.prompts?.length ? profile.prompts : [{ q: 0, a: '' }, { q: 2, a: '' }, { q: 4, a: '' }],
     interests: profile?.interests ?? [], classes: profile?.classes ?? [], dorm: profile?.dorm ?? null, spots: profile?.spots ?? [],
     photos: profile?.photos ?? [], visibility: profile?.visibility ?? 'tier',
+    captions: (profile?.photos ?? []).map((_, i) => profile?.captions?.[i] ?? ''), looking_for: profile?.looking_for ?? null, greek: profile?.greek ?? null,
   }));
   const [bday, setBday] = useState(() => {
     const [y, m, dd] = (profile?.birthday ?? '').split('-');
@@ -67,6 +69,7 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [majorQuery, setMajorQuery] = useState('');
+  const [greekQuery, setGreekQuery] = useState('');
   const [invite, setInvite] = useState('');
   const [inviteDone, setInviteDone] = useState(false);
   const scroll = useRef<ScrollView>(null);
@@ -77,7 +80,7 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
     setUploading(true);
     try {
       const url = await pickAndUploadPhoto(userId);
-      if (url) set({ photos: [...d.photos, url] });
+      if (url) setD((x) => ({ ...x, photos: [...x.photos, url], captions: [...x.captions.slice(0, x.photos.length), ''] }));
     } catch (e) {
       Alert.alert("Couldn't upload that photo", friendlyError(e));
     } finally {
@@ -85,7 +88,8 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
     }
   };
   const removePhoto = (url: string) => {
-    set({ photos: d.photos.filter((p) => p !== url) });
+    const i = d.photos.indexOf(url);
+    set({ photos: d.photos.filter((p) => p !== url), captions: d.captions.filter((_, ci) => ci !== i) });
     deletePhoto(url).catch(() => {});
   };
 
@@ -105,6 +109,7 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
       await updateProfile({
         ...d, name: d.name?.trim() ?? null, bio: d.bio?.trim() ?? null, birthday: birthdayIso(),
         prompts: d.prompts.map((p) => ({ q: p.q, a: p.a.trim() })),
+        captions: d.photos.map((_, i) => (d.captions[i] ?? '').trim()),
         ...(final ? { onboarded: true } : {}),
       });
       onDone?.();
@@ -181,6 +186,12 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
               {SHOW_ME.map((s) => <Chip key={s.id} label={s.label} selected={d.show_me === s.id} onPress={() => set({ show_me: s.id })} />)}
             </View>
           </View>
+          <View>
+            <Label>Looking for</Label>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {LOOKING_FOR.map((l) => <Chip key={l.id} label={`${l.emoji} ${l.label}`} selected={d.looking_for === l.id} onPress={() => set({ looking_for: l.id })} />)}
+            </View>
+          </View>
         </View>
       ),
     },
@@ -188,6 +199,7 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
       title: 'Add your photos',
       body: 'Add 2 to 6. Your first photo is your main one. Clear photos of your face work best.',
       render: () => (
+        <View style={{ gap: 18 }}>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
           {Array.from({ length: 6 }).map((_, i) => {
             const url = d.photos[i];
@@ -207,6 +219,20 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
               </Pressable>
             );
           })}
+        </View>
+        {d.photos.length > 0 && (
+          <View style={{ gap: 10 }}>
+            <Label style={{ marginBottom: 0 }}>Captions (optional)</Label>
+            <Text style={{ fontFamily: F.body, fontSize: 13, color: C.muted, marginTop: -6 }}>Say where it was or what’s happening. Shows under the photo.</Text>
+            {d.photos.map((url, i) => (
+              <View key={url} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Image source={{ uri: url }} style={{ width: 44, height: 55, borderRadius: 8 }} contentFit="cover" />
+                <Input value={d.captions[i] ?? ''} maxLength={80} placeholder="e.g. Top of Flagstaff at sunrise"
+                  onChangeText={(t) => set({ captions: d.photos.map((_, ci) => (ci === i ? t : d.captions[ci] ?? '')) })} style={{ flex: 1 }} />
+              </View>
+            ))}
+          </View>
+        )}
         </View>
       ),
     },
@@ -259,6 +285,16 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               {DORMS.map((x) => <Chip key={x} small label={x} selected={d.dorm === x} onPress={() => set({ dorm: d.dorm === x ? null : x })} />)}
             </View>
+          </View>
+          <View>
+            <Label>Greek life{d.greek ? `: ${d.greek}` : ' (optional)'}</Label>
+            <Input value={greekQuery} onChangeText={setGreekQuery} placeholder="Search chapters" style={{ marginBottom: 10 }} />
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              <Chip small label="Not in Greek life" selected={!d.greek} onPress={() => set({ greek: null })} />
+              {GREEK_ORGS.filter((g) => g.toLowerCase().includes(greekQuery.trim().toLowerCase())).slice(0, greekQuery ? 30 : 10)
+                .map((g) => <Chip key={g} small label={g} selected={d.greek === g} onPress={() => set({ greek: g })} />)}
+            </View>
+            {mode === 'edit' && <Text style={{ fontFamily: F.body, fontSize: 12, color: C.faint, marginTop: 8 }}>Your dorm and chapter count toward team leaderboards, so each can change once per semester.</Text>}
           </View>
           <View>
             <Label>Favorite campus spots ({d.spots.length}/4)</Label>

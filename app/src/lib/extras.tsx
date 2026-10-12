@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
 import { supabase } from './supabase';
+import { registerForPush } from './push';
 import type { Extras } from './constants';
 
 type ExtrasState = { extras: Extras | null; refreshExtras: () => Promise<void> };
@@ -23,6 +24,7 @@ export function ExtrasProvider({ children }: { children: ReactNode }) {
       fetchExtras().then((x) => { if (alive) setExtras(x); });
     };
     open();
+    registerForPush();
     const sub = AppState.addEventListener('change', (s) => { if (s === 'active') open(); });
     return () => { alive = false; sub.remove(); };
   }, []);

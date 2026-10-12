@@ -1,156 +1,241 @@
-import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, Alert, useWindowDimensions } from 'react-native';
+import { useState, type ReactNode } from 'react';
+import { Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View, Alert, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ban, Flag, GraduationCap, Heart, Home, MapPin, Star } from 'lucide-react-native';
+import { Ban, Flag, GraduationCap, Heart, Home, MapPin, Send, Star, Users } from 'lucide-react-native';
 import { C, F, GRAD } from '@/lib/theme';
 import {
-  CLASS_NAME, PROMPT_QUESTIONS, PTS, REPORT_REASONS, overlapTags, type DeckPerson, type Profile,
+  CLASS_NAME, PROMPT_QUESTIONS, PTS, REPORT_REASONS, lookingLabel, overlapTags, type DeckPerson, type Profile,
 } from '@/lib/constants';
 import { supabase, friendlyError } from '@/lib/supabase';
-import { Avatar, Badges, Button, Chip, Sheet, SwirlGlyph, TierBadge } from './ui';
 import { Explain } from '@/lib/explain';
+import { Avatar, Badges, Button, Chip, Sheet, SwirlGlyph, TierBadge, VerifiedCheck } from './ui';
 
 const classOf = (y: number | null) => (y ? `class of ’${String(y).slice(-2)}` : '');
 
-function Photo({ uri, name, style }: { uri?: string; name: string; style?: object }) {
-  if (uri) return <Image source={{ uri }} style={[StyleSheet.absoluteFill, style]} contentFit="cover" transition={150} />;
-  return (
-    <LinearGradient colors={GRAD} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
-      <Text style={{ fontFamily: F.display, fontSize: 96, color: '#fff' }}>{name.slice(0, 1).toUpperCase()}</Text>
-    </LinearGradient>
-  );
+/** The thing someone liked on a profile: a photo or a prompt. */
+export type LikeItem = { key: string; label: string; photo?: string; question?: string; answer?: string };
+
+/** Describe an item key like "photo:1" or "prompt:0" against a profile ("your photo", "their prompt"). */
+export function describeItem(key: string | null | undefined, p: Pick<Profile, 'photos' | 'prompts'> | null | undefined): LikeItem | null {
+  if (!key || !p) return null;
+  const [kind, n] = key.split(':');
+  const i = Number(n);
+  if (kind === 'photo') return { key, label: 'photo', photo: p.photos?.[i] };
+  if (kind === 'prompt') {
+    const pr = p.prompts?.[i];
+    return { key, label: 'prompt', question: pr ? PROMPT_QUESTIONS[pr.q] : undefined, answer: pr?.a };
+  }
+  return null;
 }
 
-/** The white "polaroid" card used in Discover. Tap left/right of the photo to flip photos. */
-export function ProfileCard({ person, me, onOpen }: { person: DeckPerson; me: Profile | null; onOpen?: () => void }) {
-  const [idx, setIdx] = useState(0);
-  const photos = person.photos ?? [];
-  const tags = overlapTags(me, person);
+function PhotoBlock({ uri, name, caption, width, onLike }: { uri?: string; name: string; caption?: string; width: number; onLike?: () => void }) {
   return (
-    <View style={styles.card}>
-      <View style={styles.photoWrap}>
-        <Photo uri={photos[idx]} name={person.name} />
-        {photos.length > 1 && (
-          <View style={styles.bars} pointerEvents="none">
-            {photos.map((_, i) => <View key={i} style={[styles.bar, { backgroundColor: i === idx ? '#fff' : 'rgba(255,255,255,0.42)' }]} />)}
-          </View>
+    <View>
+      <View style={{ width, aspectRatio: 4 / 5, borderRadius: 20, overflow: 'hidden', backgroundColor: C.surface2 }}>
+        {uri ? <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" transition={150} /> : (
+          <LinearGradient colors={GRAD} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
+            <Text style={{ fontFamily: F.display, fontSize: 96, color: '#fff' }}>{name.slice(0, 1).toUpperCase()}</Text>
+          </LinearGradient>
         )}
-        {photos.length > 1 && (
-          <View style={StyleSheet.absoluteFill} >
-            <View style={{ flex: 1, flexDirection: 'row' }}>
-              <Pressable style={{ flex: 1 }} accessibilityLabel="Previous photo" onPress={() => setIdx((i) => Math.max(0, i - 1))} />
-              <Pressable style={{ flex: 1 }} accessibilityLabel="Next photo" onPress={() => setIdx((i) => Math.min(photos.length - 1, i + 1))} />
-            </View>
-          </View>
-        )}
-        <View style={styles.photoBadges} pointerEvents="box-none">
-          <TierBadge tier={person.tier} onPhoto />
-          {person.super_liked_me && (
-            <Explain k="super_liked_me">
-              <LinearGradient colors={GRAD} style={styles.superBadge}>
-                <Star size={12} color="#fff" fill="#fff" />
-                <Text style={{ fontFamily: F.bold, fontSize: 12, color: '#fff' }}>Super liked you</Text>
-              </LinearGradient>
-            </Explain>
-          )}
-        </View>
+        {onLike && <LikeButton onPress={onLike} style={{ position: 'absolute', right: 12, bottom: 12 }} />}
       </View>
-      <Pressable onPress={onOpen} style={{ paddingHorizontal: 8, paddingTop: 12, paddingBottom: 6 }} accessibilityLabel={`Open ${person.name}'s full profile`}>
-        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-          <Text style={styles.name} numberOfLines={1}>{person.name}</Text>
-          <Text style={styles.age}>{person.age}</Text>
-        </View>
-        <Text style={styles.sub} numberOfLines={1}>{[person.major, classOf(person.grad_year)].filter(Boolean).join(', ')}</Text>
-        <View style={{ flexDirection: 'row', gap: 6, marginTop: 10, overflow: 'hidden' }}>
-          {(tags.length ? tags.slice(0, 2) : person.interests.slice(0, 3)).map((t) => (
-            <View key={t} style={[styles.pill, tags.length ? styles.pillTag : null]}>
-              <Text style={{ fontFamily: F.semibold, fontSize: 12, color: C.cardText }} numberOfLines={1}>{t}</Text>
-            </View>
-          ))}
-        </View>
-      </Pressable>
+      {!!caption && <Text style={styles.caption}>{caption}</Text>}
     </View>
   );
 }
 
-/** Full profile: all photos, prompts, interests, campus info, and report/block. */
-export function ProfileView({ person, me, isMe, onReport, onBlock }: {
-  person: DeckPerson; me: Profile | null; isMe?: boolean; onReport?: () => void; onBlock?: () => void;
+function LikeButton({ onPress, style }: { onPress: () => void; style?: object }) {
+  return (
+    <Pressable onPress={onPress} accessibilityLabel="Like this" hitSlop={6} style={[styles.likeBtn, style]}>
+      <Heart size={24} color={C.pink} fill={C.pink} />
+    </Pressable>
+  );
+}
+
+function PromptBlock({ q, a, onLike }: { q: number; a: string; onLike?: () => void }) {
+  return (
+    <View style={styles.prompt}>
+      <Text style={{ fontFamily: F.semibold, fontSize: 13, color: C.muted }}>{PROMPT_QUESTIONS[q] ?? ''}</Text>
+      <Text style={{ fontFamily: F.displayBold, fontSize: 24, lineHeight: 30, color: C.text, marginTop: 8, paddingRight: onLike ? 44 : 0 }}>{a}</Text>
+      {onLike && <LikeButton onPress={onLike} style={{ position: 'absolute', right: 12, bottom: 12 }} />}
+    </View>
+  );
+}
+
+function InfoChip({ icon, text }: { icon: ReactNode; text: string }) {
+  return (
+    <View style={styles.infoChip}>
+      {icon}
+      <Text style={{ fontFamily: F.semibold, fontSize: 13, color: C.text }} numberOfLines={1}>{text}</Text>
+    </View>
+  );
+}
+
+/**
+ * A full profile you scroll through top to bottom, like Hinge: photos mixed with prompts.
+ * Pass onLike to show a heart on every photo and prompt.
+ */
+export function ScrollProfile({ person, me, isMe, onLike, onReport, onBlock, header, footer, bottomPad = 40 }: {
+  person: DeckPerson; me: Profile | null; isMe?: boolean; onLike?: (item: LikeItem) => void;
+  onReport?: () => void; onBlock?: () => void; header?: ReactNode; footer?: ReactNode; bottomPad?: number;
 }) {
+  const { width } = useWindowDimensions();
+  const w = Math.min(width, 520) - 32;
   const tags = isMe ? [] : overlapTags(me, person);
   const shared = new Set(isMe ? [] : me?.interests ?? []);
-  const { width } = useWindowDimensions();
-  return (
-    <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-      <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
-        {(person.photos.length ? person.photos : [undefined]).map((uri, i) => (
-          <View key={i} style={{ width, aspectRatio: 4 / 5 }}>
-            <Photo uri={uri} name={person.name} />
+  const photos = person.photos.length ? person.photos : [undefined];
+  const captions = person.captions ?? [];
+  const prompts = person.prompts ?? [];
+  const looking = lookingLabel(person.looking_for);
+  const theirLike = !isMe && (person.liked_me_comment || person.liked_me_item) ? describeItem(person.liked_me_item, me) : null;
+
+  const photo = (i: number) => i < photos.length ? (
+    <PhotoBlock key={`p${i}`} uri={photos[i]} name={person.name} caption={captions[i]} width={w}
+      onLike={onLike ? () => onLike({ key: `photo:${i}`, label: 'photo', photo: photos[i] }) : undefined} />
+  ) : null;
+  const prompt = (i: number) => i < prompts.length ? (
+    <PromptBlock key={`q${i}`} q={prompts[i].q} a={prompts[i].a}
+      onLike={onLike ? () => onLike({ key: `prompt:${i}`, label: 'prompt', question: PROMPT_QUESTIONS[prompts[i].q], answer: prompts[i].a }) : undefined} />
+  ) : null;
+
+  const about = (
+    <View key="about" style={styles.card}>
+      {!!person.bio && <Text style={{ fontFamily: F.body, fontSize: 16, lineHeight: 23, color: C.text }}>{person.bio}</Text>}
+      {tags.length > 0 && (
+        <Explain k="overlap" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {tags.map((t) => <View key={t} style={styles.tagDark}><Text style={styles.tagDarkText}>{t}</Text></View>)}
+        </Explain>
+      )}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {person.interests.map((i) => (
+          <View key={i} style={[styles.interest, shared.has(i) && { borderColor: C.pink }]}>
+            <Text style={{ fontFamily: F.semibold, fontSize: 13, color: C.text }}>{i}</Text>
           </View>
         ))}
-      </ScrollView>
-      <View style={{ padding: 20, gap: 22 }}>
-        <View>
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-            <Text style={{ fontFamily: F.display, fontSize: 36, color: C.text }}>{person.name}</Text>
-            <Text style={{ fontFamily: F.semibold, fontSize: 28, color: C.muted }}>{person.age}</Text>
-            {!!person.pronouns && <Text style={{ fontFamily: F.body, fontSize: 14, color: C.muted }}>{person.pronouns}</Text>}
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
-            <GraduationCap size={16} color={C.muted} />
-            <Text style={{ fontFamily: F.body, fontSize: 14, color: C.muted }}>
-              {[person.major, person.grad_year ? `${CLASS_NAME[person.grad_year] ?? ''} ${classOf(person.grad_year)}` : ''].filter(Boolean).join(', ')}
-            </Text>
-          </View>
-          <View style={{ marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-            <TierBadge tier={person.tier} />
-            <Badges ids={person.badges} />
-          </View>
-        </View>
-        {tags.length > 0 && (
-          <Explain k="overlap" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {tags.map((t) => <View key={t} style={styles.tagDark}><Text style={styles.tagDarkText}>{t}</Text></View>)}
-          </Explain>
-        )}
-        {!!person.bio && <Text style={{ fontFamily: F.body, fontSize: 16, lineHeight: 23, color: C.text }}>{person.bio}</Text>}
-        {person.prompts.map((p, i) => (
-          <View key={i} style={styles.prompt}>
-            <Text style={{ fontFamily: F.semibold, fontSize: 13, color: C.muted }}>{PROMPT_QUESTIONS[p.q] ?? ''}</Text>
-            <Text style={{ fontFamily: F.displayBold, fontSize: 20, color: C.text, marginTop: 6 }}>{p.a}</Text>
-          </View>
-        ))}
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-          {person.interests.map((i) => (
-            <View key={i} style={[styles.interest, shared.has(i) && { borderColor: C.pink }]}>
-              <Text style={{ fontFamily: F.semibold, fontSize: 13, color: C.text }}>{i}</Text>
-            </View>
-          ))}
-        </View>
-        <View style={styles.infoBox}>
-          {[
-            { icon: <Home size={16} color={C.muted} />, label: 'Lives', value: person.dorm || 'Not shared' },
-            { icon: <GraduationCap size={16} color={C.muted} />, label: 'Classes', value: person.classes.join(', ') || 'Not shared' },
-            { icon: <MapPin size={16} color={C.muted} />, label: 'Favorite spots', value: person.spots.join(', ') || 'Not shared' },
-          ].map((r) => (
-            <View key={r.label} style={{ flexDirection: 'row', gap: 10, paddingVertical: 8 }}>
-              {r.icon}
-              <Text style={{ fontFamily: F.body, fontSize: 14, color: C.muted, width: 104 }}>{r.label}</Text>
-              <Text style={{ fontFamily: F.semibold, fontSize: 14, color: C.text, flex: 1 }}>{r.value}</Text>
-            </View>
-          ))}
-        </View>
-        {!isMe && (
-          <>
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <Button label="Report" variant="secondary" icon={<Flag size={16} color={C.text} />} onPress={onReport} style={{ flex: 1 }} />
-              <Button label="Block" variant="secondary" icon={<Ban size={16} color={C.text} />} onPress={onBlock} style={{ flex: 1 }} />
-            </View>
-            <Text style={{ fontFamily: F.body, fontSize: 12, color: C.faint, textAlign: 'center' }}>{person.name} won't know if you report or block them.</Text>
-          </>
-        )}
       </View>
+    </View>
+  );
+
+  const campus = (
+    <View key="campus" style={styles.card}>
+      {[
+        { icon: <GraduationCap size={16} color={C.muted} />, label: 'Classes', value: person.classes.join(', ') },
+        { icon: <MapPin size={16} color={C.muted} />, label: 'Favorite spots', value: person.spots.join(', ') },
+      ].filter((r) => r.value).map((r) => (
+        <View key={r.label} style={{ flexDirection: 'row', gap: 10 }}>
+          {r.icon}
+          <Text style={{ fontFamily: F.body, fontSize: 14, color: C.muted, width: 104 }}>{r.label}</Text>
+          <Text style={{ fontFamily: F.semibold, fontSize: 14, color: C.text, flex: 1 }}>{r.value}</Text>
+        </View>
+      ))}
+    </View>
+  );
+
+  // Hinge-style order: photo, prompt, photo, about, photo, prompt, photo, prompt, the rest.
+  const blocks = [photo(0), prompt(0), photo(1), about, photo(2), prompt(1), photo(3), prompt(2), photo(4), photo(5),
+    ...prompts.slice(3).map((_, i) => prompt(i + 3)),
+    (person.classes.length || person.spots.length) ? campus : null].filter(Boolean);
+
+  return (
+    <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: bottomPad, gap: 14 }} showsVerticalScrollIndicator={false}>
+      {header}
+      <View style={{ paddingTop: 4 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <Text style={{ fontFamily: F.display, fontSize: 34, color: C.text }}>{person.name}</Text>
+          {person.verified && <VerifiedCheck size={22} />}
+          <Text style={{ fontFamily: F.semibold, fontSize: 24, color: C.muted }}>{person.age}</Text>
+        </View>
+        <View style={{ marginTop: 8, flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+          <TierBadge tier={person.tier} />
+          <Badges ids={person.badges} />
+        </View>
+      </View>
+
+      {theirLike !== null || person.liked_me_comment ? (
+        <Explain k={person.super_liked_me ? 'super_liked_me' : 'liked_me'}>
+          <LinearGradient colors={GRAD} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.likedYou}>
+            {theirLike?.photo ? <Image source={{ uri: theirLike.photo }} style={{ width: 44, height: 55, borderRadius: 8 }} /> : (person.super_liked_me ? <Star size={22} color="#fff" fill="#fff" /> : <Heart size={22} color="#fff" fill="#fff" />)}
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: F.bold, fontSize: 13, color: '#fff' }}>
+                {person.super_liked_me ? 'Super liked' : 'Liked'} your {theirLike?.label ?? 'profile'}{theirLike?.question ? `: “${theirLike.question}”` : ''}
+              </Text>
+              {!!person.liked_me_comment && <Text style={{ fontFamily: F.semibold, fontSize: 16, color: '#fff', marginTop: 2 }}>“{person.liked_me_comment}”</Text>}
+            </View>
+          </LinearGradient>
+        </Explain>
+      ) : person.super_liked_me ? (
+        <Explain k="super_liked_me">
+          <LinearGradient colors={GRAD} style={[styles.likedYou, { paddingVertical: 10 }]}>
+            <Star size={18} color="#fff" fill="#fff" />
+            <Text style={{ fontFamily: F.bold, fontSize: 14, color: '#fff' }}>Super liked you</Text>
+          </LinearGradient>
+        </Explain>
+      ) : null}
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+        {looking && <Explain k="looking_for"><InfoChip icon={<Text>{looking.emoji}</Text>} text={looking.label} /></Explain>}
+        {(person.major || person.grad_year) && (
+          <InfoChip icon={<GraduationCap size={15} color={C.muted} />}
+            text={[person.major, person.grad_year ? `${CLASS_NAME[person.grad_year] ?? ''} ${classOf(person.grad_year)}` : ''].filter(Boolean).join(', ')} />
+        )}
+        {!!person.pronouns && <InfoChip icon={<Text style={{ color: C.muted }}>·</Text>} text={person.pronouns} />}
+        {!!person.dorm && <InfoChip icon={<Home size={15} color={C.muted} />} text={person.dorm} />}
+        {!!person.greek && <InfoChip icon={<Users size={15} color={C.muted} />} text={person.greek} />}
+      </ScrollView>
+
+      {blocks}
+
+      {!isMe && (onReport || onBlock) && (
+        <View style={{ gap: 10, marginTop: 6 }}>
+          <Button label={`Send ${person.name} to a friend`} variant="secondary" icon={<Send size={16} color={C.text} />}
+            onPress={() => Share.share({ message: `Check out ${person.name} on Swirl 👀 swirl://person/${person.id}` }).catch(() => {})} />
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <Button label="Report" variant="secondary" icon={<Flag size={16} color={C.text} />} onPress={onReport} style={{ flex: 1 }} />
+            <Button label="Block" variant="secondary" icon={<Ban size={16} color={C.text} />} onPress={onBlock} style={{ flex: 1 }} />
+          </View>
+          <Text style={{ fontFamily: F.body, fontSize: 12, color: C.faint, textAlign: 'center' }}>{person.name} won't know if you report or block them.</Text>
+        </View>
+      )}
+      {footer}
     </ScrollView>
+  );
+}
+
+/** Kept for screens that want the old name. */
+export function ProfileView(props: { person: DeckPerson; me: Profile | null; isMe?: boolean; onReport?: () => void; onBlock?: () => void }) {
+  return <ScrollProfile {...props} />;
+}
+
+/** "Send a like" sheet with an optional comment on the photo or prompt you liked. */
+export function LikeSheet({ item, name, visible, supersLeft, busy, onClose, onSend }: {
+  item: LikeItem | null; name: string; visible: boolean; supersLeft: number | null; busy?: boolean;
+  onClose: () => void; onSend: (kind: 'like' | 'super', comment: string) => void;
+}) {
+  const [comment, setComment] = useState('');
+  const send = (kind: 'like' | 'super') => { onSend(kind, comment.trim()); setComment(''); };
+  return (
+    <Sheet visible={visible} onClose={() => { setComment(''); onClose(); }} title={`Like ${name}’s ${item?.label ?? 'profile'}`}>
+      <View style={{ gap: 12, paddingBottom: 8 }}>
+        {item?.photo ? (
+          <Image source={{ uri: item.photo }} style={{ width: '100%', height: 220, borderRadius: 16 }} contentFit="cover" />
+        ) : item?.answer ? (
+          <View style={styles.prompt}>
+            <Text style={{ fontFamily: F.semibold, fontSize: 13, color: C.muted }}>{item.question}</Text>
+            <Text style={{ fontFamily: F.displayBold, fontSize: 20, color: C.text, marginTop: 6 }}>{item.answer}</Text>
+          </View>
+        ) : null}
+        <TextInput
+          value={comment} onChangeText={setComment} placeholder="Add a comment (optional)" placeholderTextColor={C.faint}
+          maxLength={200} multiline
+          style={{ minHeight: 52, backgroundColor: C.surface2, borderRadius: 16, paddingHorizontal: 14, paddingTop: 14, paddingBottom: 14, color: C.text, fontFamily: F.body, fontSize: 16 }}
+        />
+        <Text style={{ fontFamily: F.body, fontSize: 12, color: C.faint }}>If you match, your comment becomes the first message.</Text>
+        <Button label="Send like" icon={<Heart size={16} color="#fff" fill="#fff" />} onPress={() => send('like')} loading={busy} />
+        <Button label={`Super Like${supersLeft != null ? ` (${supersLeft} left)` : ''}`} variant="secondary"
+          icon={<Star size={16} color={C.pink} fill={C.pink} />} onPress={() => send('super')} disabled={busy || supersLeft === 0} />
+      </View>
+    </Sheet>
   );
 }
 
@@ -237,22 +322,15 @@ export function MatchScreen({ me, them, onMessage, onClose }: {
 }
 
 const styles = StyleSheet.create({
-  card: { flex: 1, backgroundColor: C.card, borderRadius: 26, padding: 10, shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 24, shadowOffset: { width: 0, height: 14 }, elevation: 8 },
-  photoWrap: { flex: 1, borderRadius: 18, overflow: 'hidden', backgroundColor: C.surface2 },
-  bars: { position: 'absolute', top: 8, left: 12, right: 12, flexDirection: 'row', gap: 4, zIndex: 2 },
-  bar: { flex: 1, height: 4, borderRadius: 2 },
-  photoBadges: { position: 'absolute', top: 22, left: 12, gap: 6, zIndex: 2 },
-  superBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 999, paddingVertical: 3, paddingHorizontal: 8, alignSelf: 'flex-start' },
-  name: { fontFamily: F.display, fontSize: 30, color: C.cardText, flexShrink: 1 },
-  age: { fontFamily: F.semibold, fontSize: 24, color: C.cardMuted },
-  sub: { fontFamily: F.body, fontSize: 14, color: C.cardMuted, marginTop: 2 },
-  pill: { borderRadius: 999, paddingVertical: 4, paddingHorizontal: 10, backgroundColor: 'rgba(21,16,31,0.06)' },
-  pillTag: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: C.pink },
+  caption: { fontFamily: F.medium, fontSize: 14, color: C.muted, marginTop: 8, paddingHorizontal: 4 },
+  likeBtn: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
+  prompt: { backgroundColor: C.surface, borderRadius: 20, padding: 20, paddingBottom: 26, borderWidth: 1, borderColor: C.line, minHeight: 120 },
+  card: { backgroundColor: C.surface, borderRadius: 20, padding: 18, borderWidth: 1, borderColor: C.line, gap: 14 },
+  infoChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.surface2, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
+  likedYou: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 18, padding: 12 },
   tagDark: { borderRadius: 999, borderWidth: 1.5, borderColor: C.pink, paddingVertical: 5, paddingHorizontal: 10 },
   tagDarkText: { fontFamily: F.semibold, fontSize: 13, color: C.text },
-  prompt: { backgroundColor: C.surface, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: C.line },
   interest: { backgroundColor: C.surface2, borderRadius: 999, paddingVertical: 7, paddingHorizontal: 12, borderWidth: 1.5, borderColor: 'transparent' },
-  infoBox: { backgroundColor: C.surface, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 6, borderWidth: 1, borderColor: C.line },
   miniPolaroid: { position: 'absolute', backgroundColor: '#fff', padding: 6, borderRadius: 18 },
   heart: { position: 'absolute', bottom: 0, width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', borderWidth: 4, borderColor: C.bg },
 });

@@ -2,16 +2,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ban, CalendarHeart, ChevronLeft, Flag, HeartCrack, Lightbulb, MapPin, MoreHorizontal, Send, User } from 'lucide-react-native';
-import { Avatar, Button, EmptyState, Loading, MenuRow, Screen, Sheet, TierBadge } from '@/components/ui';
+import { Ban, CalendarHeart, ChevronLeft, Dices, Flag, Heart, HeartCrack, Lightbulb, MapPin, MoreHorizontal, Send, User } from 'lucide-react-native';
+import { Avatar, Button, EmptyState, Loading, MenuRow, Screen, Sheet, TierBadge, VerifiedCheck } from '@/components/ui';
+import { useExplain } from '@/lib/explain-context';
 import { ReportSheet } from '@/components/profile';
 import { useAuth } from '@/lib/auth';
 import { supabase, friendlyError } from '@/lib/supabase';
-import { PTS, ageFrom, pickDateIdeas, type DeckPerson } from '@/lib/constants';
+import { ICEBREAKERS, PTS, ageFrom, pickDateIdeas, type DeckPerson } from '@/lib/constants';
 import { Explain, InfoButton } from '@/lib/explain';
 import { C, F, GRAD } from '@/lib/theme';
 
-type Msg = { id: number; match_id: string; sender_id: string; body: string; created_at: string };
+type Msg = { id: number; match_id: string; sender_id: string; body: string; created_at: string; kind?: 'text' | 'like_comment' };
 type MatchRec = { id: string; user_a: string; user_b: string; created_at: string; a_date: boolean; b_date: boolean; date_paid: boolean };
 
 type ChatData =
@@ -47,6 +48,7 @@ function timeLabel(iso: string) {
 }
 
 export default function Chat() {
+  const explain = useExplain();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { session, profile } = useAuth();
   const me = session?.user.id ?? '';
@@ -172,7 +174,10 @@ export default function Chat() {
       <Pressable onPress={() => router.push(`/person/${them.id}`)} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
         <Avatar uri={them.photos[0]} name={them.name} size={38} />
         <View style={{ flex: 1 }}>
-          <Text style={{ fontFamily: F.bold, fontSize: 17, color: C.text }} numberOfLines={1}>{them.name}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Text style={{ fontFamily: F.bold, fontSize: 17, color: C.text, flexShrink: 1 }} numberOfLines={1}>{them.name}</Text>
+            {them.verified && <VerifiedCheck size={15} />}
+          </View>
           {them.tier && <View style={{ marginTop: 2 }}><TierBadge tier={them.tier} small /></View>}
         </View>
       </Pressable>
@@ -241,6 +246,12 @@ export default function Chat() {
               <View>
                 {gap && <Text style={styles.stamp}>{timeLabel(item.created_at)}</Text>}
                 <View style={{ alignItems: mine ? 'flex-end' : 'flex-start', marginVertical: 2 }}>
+                  {item.kind === 'like_comment' && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 3, marginHorizontal: 6 }}>
+                      <Heart size={11} color={C.pink} fill={C.pink} />
+                      <Text style={{ fontFamily: F.semibold, fontSize: 11, color: C.muted }}>{mine ? 'Your comment with your like' : `${them.name}'s comment with their like`}</Text>
+                    </View>
+                  )}
                   {mine ? (
                     <LinearGradient colors={GRAD} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.bubble, { borderBottomRightRadius: 6 }]}>
                       <Text style={[styles.bubbleText, { color: '#fff' }]}>{item.body}</Text>
@@ -256,6 +267,10 @@ export default function Chat() {
           }}
         />
         <View style={styles.composer}>
+          <Pressable onPress={() => setText(ICEBREAKERS[Math.floor(Math.random() * ICEBREAKERS.length)])} onLongPress={() => explain('icebreaker')}
+            style={styles.iceBtn} accessibilityLabel="Icebreaker question">
+            <Dices size={20} color={C.text} />
+          </Pressable>
           <TextInput
             value={text}
             onChangeText={setText}
@@ -319,6 +334,7 @@ const styles = StyleSheet.create({
   bubble: { maxWidth: '78%', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9 },
   bubbleText: { fontFamily: F.body, fontSize: 16, lineHeight: 21, color: C.text },
   idea: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.surface, borderWidth: 1, borderColor: C.line, borderRadius: 16, padding: 12 },
+  iceBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: C.surface2, alignItems: 'center', justifyContent: 'center' },
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 8, borderTopWidth: 1, borderTopColor: C.line },
   input: { flex: 1, minHeight: 42, maxHeight: 120, backgroundColor: C.surface2, borderRadius: 21, paddingHorizontal: 16, paddingTop: 11, paddingBottom: 11, color: C.text, fontFamily: F.body, fontSize: 16 },
   sendBtn: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },

@@ -3,8 +3,9 @@ import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text,
 import { router, useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Defs, Path, Stop, LinearGradient as SvgGradient } from 'react-native-svg';
-import { BarChart3, Calculator, ChevronRight, Eye, Gift, LogOut, Pause, Pencil, ShieldCheck, Trash2, Trophy } from 'lucide-react-native';
-import { Avatar, Badges, Button, Chip, Loading, MenuRow, Screen, Sheet, TierBadge } from '@/components/ui';
+import { BadgeCheck, BarChart3, Bell, Calculator, ChevronRight, Eye, Gift, LogOut, Pause, Pencil, Share2, ShieldCheck, Trash2, Trophy } from 'lucide-react-native';
+import { Avatar, Badges, Button, Chip, Loading, MenuRow, Screen, Sheet, TierBadge, VerifiedCheck } from '@/components/ui';
+import { ShareSheet, type Recap, type ShareContent } from '@/components/ShareCard';
 import { Explain, InfoButton } from '@/lib/explain';
 import { useExplain } from '@/lib/explain-context';
 import { useExtras } from '@/lib/extras';
@@ -75,13 +76,17 @@ export default function ProfileTab() {
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [safety, setSafety] = useState(false);
+  const [recap, setRecap] = useState<Recap | null>(null);
+  const [sharing, setSharing] = useState<ShareContent | null>(null);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
-    const [s, lb] = await Promise.all([
+    const [s, lb, rc] = await Promise.all([
       supabase.rpc('get_my_score'),
       supabase.rpc('get_leaderboard', { p_mode: 'campus', p_grad: null }),
+      supabase.rpc('get_weekly_recap'),
     ]);
+    if (!rc.error) setRecap(rc.data as Recap);
     if (s.error) { setError(friendlyError(s.error)); return; }
     setError('');
     setInfo(s.data as ScoreInfo);
@@ -93,7 +98,7 @@ export default function ProfileTab() {
 
   if (!profile) return <Screen><Loading /></Screen>;
 
-  const save = async (patch: { visibility?: Visibility; paused?: boolean }) => {
+  const save = async (patch: { visibility?: Visibility; paused?: boolean; push_enabled?: boolean }) => {
     setSaving(true);
     try { await updateProfile(patch); } catch (e) { Alert.alert("Couldn't save that", friendlyError(e)); } finally { setSaving(false); }
   };
@@ -138,7 +143,10 @@ export default function ProfileTab() {
             <Avatar uri={profile.photos[0]} name={profile.name} size={64} />
           </Pressable>
           <View style={{ flex: 1, gap: 4 }}>
-            <Text style={{ fontFamily: F.display, fontSize: 26, color: C.text }} numberOfLines={1}>{profile.name}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontFamily: F.display, fontSize: 26, color: C.text, flexShrink: 1 }} numberOfLines={1}>{profile.name}</Text>
+              {(extras?.verified ?? profile.verified) && <VerifiedCheck size={20} />}
+            </View>
             <Text style={{ fontFamily: F.body, fontSize: 14, color: C.muted }}>
               {[profile.major, profile.grad_year ? CLASS_NAME[profile.grad_year] : null].filter(Boolean).join(' · ')}
             </Text>
@@ -177,12 +185,45 @@ export default function ProfileTab() {
               {next ? `${fmt(next.min - score)} to ${next.name}` : 'Top tier. Keep it up.'}
             </Text>
           </Explain>
-          {extras?.season && (
-            <Explain k="season" ctx={{ name: extras.season.name }} style={{ marginTop: 10 }}>
-              <Text style={[styles.scoreSub, { opacity: 0.8 }]}>{extras.season.name}</Text>
-            </Explain>
-          )}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
+            {extras?.season && (
+              <Explain k="season" ctx={{ name: extras.season.name }} style={{ flex: 1 }}>
+                <Text style={[styles.scoreSub, { opacity: 0.8 }]}>{extras.season.name}</Text>
+              </Explain>
+            )}
+            <Pressable onPress={() => setSharing({ kind: 'tier', tier: tier.id, place: placeLabel, season: extras?.season?.name ?? null })} style={styles.shareBtn} accessibilityLabel="Share my tier">
+              <Share2 size={14} color="#fff" />
+              <Text style={{ fontFamily: F.bold, fontSize: 12, color: '#fff' }}>Share</Text>
+            </Pressable>
+          </View>
         </LinearGradient>
+
+        {/* Weekly recap */}
+        {recap && (
+          <View style={styles.box}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Explain k="recap"><Text style={styles.boxTitle}>Your week</Text></Explain>
+              <Pressable onPress={() => setSharing({ kind: 'week', recap })} hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Share2 size={14} color={C.pink} />
+                <Text style={{ fontFamily: F.semibold, fontSize: 13, color: C.pink }}>Share</Text>
+              </Pressable>
+            </View>
+            <View style={{ flexDirection: 'row', marginTop: 12 }}>
+              {[
+                [recap.rank_then - recap.rank_now > 0 ? `↑${recap.rank_then - recap.rank_now}` : recap.rank_then - recap.rank_now < 0 ? `↓${recap.rank_now - recap.rank_then}` : '—', 'spots'],
+                [signed(recap.points), 'points'],
+                [String(recap.likes), 'likes'],
+                [String(recap.matches), 'matches'],
+                [String(recap.convos + recap.dates), 'convos + dates'],
+              ].map(([v, l]) => (
+                <View key={l} style={{ flex: 1, alignItems: 'center' }}>
+                  <Text style={{ fontFamily: F.display, fontSize: 20, color: C.text }}>{v}</Text>
+                  <Text style={{ fontFamily: F.body, fontSize: 11, color: C.muted, textAlign: 'center' }}>{l}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
 
         {/* Invites */}
         <Pressable onPress={() => router.push('/invite')} style={[styles.box, { flexDirection: 'row', alignItems: 'center', gap: 12 }]} accessibilityRole="button">
@@ -258,6 +299,17 @@ export default function ProfileTab() {
             </Pressable>
             <Switch value={profile.paused} disabled={saving} onValueChange={(v) => save({ paused: v })} trackColor={{ true: C.pink, false: C.surface2 }} thumbColor="#fff" />
           </View>
+          <View style={styles.switchRow}>
+            <View style={styles.icon}><Bell size={18} color={C.text} /></View>
+            <Pressable style={{ flex: 1 }} onPress={() => explain('push')}>
+              <Text style={{ fontFamily: F.semibold, fontSize: 15, color: C.text }}>Notifications</Text>
+              <Text style={{ fontFamily: F.body, fontSize: 12, color: C.muted, marginTop: 2 }}>Matches, messages and Swirl Nights</Text>
+            </Pressable>
+            <Switch value={profile.push_enabled ?? true} disabled={saving} onValueChange={(v) => save({ push_enabled: v })} trackColor={{ true: C.pink, false: C.surface2 }} thumbColor="#fff" />
+          </View>
+          <MenuRow icon={<BadgeCheck size={18} color="#3B82F6" />} label={(extras?.verified ?? profile.verified) ? 'Verified' : 'Get verified'}
+            sub={{ approved: 'Your profile has a blue check', pending: 'We’re checking your selfie', rejected: 'Didn’t go through. Try again', none: 'A quick selfie earns a blue check' }[extras?.verification_status ?? profile.verification_status ?? 'none']}
+            onPress={() => router.push('/verify-photo')} />
           {extras?.is_admin && (
             <MenuRow icon={<BarChart3 size={18} color={C.pink} />} label="Admin dashboard" sub="Signups, activity, reports, rewards" onPress={() => router.push('/admin')} />
           )}
@@ -271,6 +323,8 @@ export default function ProfileTab() {
 
         <Text style={{ fontFamily: F.body, fontSize: 12, color: C.faint, textAlign: 'center' }}>Signed in as {profile.email}</Text>
       </ScrollView>
+
+      <ShareSheet content={sharing} onClose={() => setSharing(null)} />
 
       <Sheet visible={safety} onClose={() => setSafety(false)} title="Safety tips">
         <ScrollView contentContainerStyle={{ gap: 10, paddingBottom: 16 }}>
@@ -305,6 +359,7 @@ const styles = StyleSheet.create({
   barTrack: { height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.25)', overflow: 'hidden' },
   barFill: { height: 8, borderRadius: 4, backgroundColor: '#fff' },
   barTrackDark: { height: 6, borderRadius: 3, backgroundColor: C.surface2, overflow: 'hidden' },
+  shareBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(14,11,22,0.3)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
   giftIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   box: { backgroundColor: C.surface, borderRadius: 20, padding: 16, borderWidth: 1, borderColor: C.line },
   boxTitle: { fontFamily: F.bold, fontSize: 15, color: C.text },
