@@ -10,7 +10,7 @@ import { useExplain } from '@/lib/explain-context';
 import { store, useExtras } from '@/lib/extras';
 import { useAuth } from '@/lib/auth';
 import { supabase, friendlyError } from '@/lib/supabase';
-import { CLASS_NAME, GRAD_YEARS, fmt, signed, tierById, topPct, type TierId } from '@/lib/constants';
+import { CLASS_NAME, GRAD_YEARS, OFF_CAMPUS, fmt, signed, tierById, topPct, type TierId } from '@/lib/constants';
 import { C, F, GRAD } from '@/lib/theme';
 
 type Row = {
@@ -28,14 +28,21 @@ export default function Leaderboard() {
   const [grad, setGrad] = useState<number>(profile?.grad_year ?? 2029);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [teams, setTeams] = useState<TeamRow[] | null>(null);
+  const [champs, setChamps] = useState<{ dorm?: string; greek?: string; season?: number }>({});
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [recap, setRecap] = useState(false);
 
   const load = useCallback(async () => {
     if (mode === 'dorms' || mode === 'greek') {
-      const { data, error: e } = await supabase.rpc(mode === 'dorms' ? 'get_dorm_board' : 'get_greek_board');
+      const [{ data, error: e }, past] = await Promise.all([
+        supabase.rpc(mode === 'dorms' ? 'get_dorm_board' : 'get_greek_board'),
+        supabase.from('season_team_results').select('season_id,kind,name').eq('rank', 1).order('season_id', { ascending: false }).limit(4),
+      ]);
       if (e) { setError(friendlyError(e)); return; }
+      const won = (past.data ?? []) as { season_id: number; kind: 'dorm' | 'greek'; name: string }[];
+      const latest = won[0]?.season_id;
+      setChamps({ season: latest, dorm: won.find((w) => w.season_id === latest && w.kind === 'dorm')?.name, greek: won.find((w) => w.season_id === latest && w.kind === 'greek')?.name });
       setError('');
       setTeams(((data ?? []) as { rank: number; dorm?: string; chapter?: string; members: number; avg_week: number; is_mine: boolean }[])
         .map((r) => ({ rank: r.rank, name: (r.dorm ?? r.chapter) as string, members: r.members, avg_week: r.avg_week, is_mine: r.is_mine })));
@@ -112,7 +119,23 @@ export default function Leaderboard() {
         keyExtractor={(d) => d.name}
         contentContainerStyle={{ padding: 8, paddingBottom: 40 }}
         refreshControl={<RefreshControl refreshing={refreshing} tintColor={C.pink} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}
-        ListHeaderComponent={<Explain k={greek ? 'greek' : 'dorms'}><Text style={styles.note}>Average points per member this week · tap for how it works</Text></Explain>}
+        ListHeaderComponent={
+          <View style={{ gap: 8, marginBottom: 4 }}>
+            <Explain k={greek ? 'greek' : 'dorms'}><Text style={styles.note}>Average points per member this week · tap for how it works</Text></Explain>
+            {!!(greek ? champs.greek : champs.dorm) && (
+              <View style={styles.champs}>
+                <Crown size={16} color="#FFC93C" fill="#FFC93C" />
+                <Text style={styles.champsText}>Season {champs.season} champs: {greek ? champs.greek : champs.dorm}</Text>
+              </View>
+            )}
+            {!greek && !isDorm(profile?.dorm) && (
+              <Text style={[styles.note, { color: C.faint }]}>
+                {profile?.dorm ? 'Off-campus isn’t a dorm, so you’re watching this one.' : 'Add your dorm in Edit profile to join your team.'}
+                {profile?.greek ? ' Your chapter still competes on the Greek board.' : ''}
+              </Text>
+            )}
+          </View>
+        }
         renderItem={({ item: d }) => (
           <View style={[styles.row, d.is_mine && { borderColor: C.pink, borderWidth: 1.5 }]}>
             <Text style={styles.rank}>{d.rank}</Text>
@@ -228,7 +251,11 @@ export default function Leaderboard() {
   );
 }
 
+const isDorm = (d?: string | null) => !!d && !OFF_CAMPUS.includes(d);
+
 const styles = StyleSheet.create({
+  champs: { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'center', backgroundColor: C.surface2, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
+  champsText: { fontFamily: F.semibold, fontSize: 13, color: C.text },
   podName: { fontFamily: F.bold, fontSize: 14, color: C.text, marginTop: 8 },
   value: { fontFamily: F.bold, fontSize: 14, color: C.text },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 16, borderWidth: 1.5, borderColor: 'transparent' },

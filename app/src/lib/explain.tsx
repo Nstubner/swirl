@@ -2,7 +2,7 @@ import { useCallback, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Info } from 'lucide-react-native';
 import { Button, Sheet, TierBadge } from '@/components/ui';
-import { BADGES, INVITE_MILESTONES, PTS, TIERS, VISIBILITY, fmt, type TierId } from './constants';
+import { badgeInfo, INVITE_MILESTONES, PTS, TIERS, VISIBILITY, fmt, type TierId } from './constants';
 import { ExplainContext, useExplain } from './explain-context';
 import { C, F } from './theme';
 
@@ -66,7 +66,7 @@ const ENTRIES: Record<string, (ctx: Ctx) => Entry> = {
   dorms: () => ({
     title: 'Dorm vs dorm',
     summary: 'Each dorm’s score is the average points its members earned this week.',
-    bullets: ['A dorm needs 5+ people on Swirl to show up.', 'Points from your own dorm-mates don’t count.', 'You can change your dorm once per semester.'],
+    bullets: ['A dorm needs 5+ people on Swirl to show up.', 'Points from your own dorm-mates don’t count.', 'Off-campus and the Hill don’t compete. Anyone can watch.', 'The top dorm at the end of the season wins a prize, and everyone in it gets a Champs badge.', 'You can change your dorm once per semester.'],
   }),
   greek: () => ({
     title: 'Greek board',
@@ -75,6 +75,7 @@ const ENTRIES: Record<string, (ctx: Ctx) => Entry> = {
       'Conversations and dates count full. Likes count half.',
       'Points from your own chapter don’t count.',
       'A chapter needs 5+ members on Swirl to show up.',
+      'The top chapter at the end of the season wins a prize, and every member gets a Champs badge.',
       'Set your chapter in Edit profile (once per semester).',
     ],
   }),
@@ -115,8 +116,17 @@ const ENTRIES: Record<string, (ctx: Ctx) => Entry> = {
     bullets: ['Your friend gets a bonus Super Like too.'],
   }),
   badge: (ctx) => {
-    const b = BADGES[String(ctx?.id)] ?? { label: 'Badge', body: '' };
-    return { title: b.label, summary: b.body, bullets: ['Earned through the invite program.'] };
+    const b = badgeInfo(String(ctx?.id));
+    if (!b) return { title: 'Badge', summary: '' };
+    return {
+      title: b.label, summary: b.body,
+      bullets: [
+        b.kind === 'invite' ? 'Earned through the invite program.'
+          : b.kind === 'season' ? 'Given at the end of each season to the top 25 people who show on the leaderboard.'
+          : 'Given to everyone in the winning dorm or chapter at the end of each season.',
+        'Badges stay on your profile for good.',
+      ],
+    };
   },
   verified: () => ({
     title: 'Verified',

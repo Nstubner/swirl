@@ -487,6 +487,8 @@ export function Support() {
 
 /* ---------- Seasons & events ---------- */
 
+type Winner = { season_id: number; season_name: string; kind: 'dorm' | 'greek'; name: string; rank: number; members: number; avg_points: number; prize_status: 'new' | 'sent' };
+
 type Ev = { id: number; name: string; description: string | null; multiplier: number; starts_at: string; ends_at: string };
 
 export function SeasonsEvents() {
@@ -501,6 +503,7 @@ export function SeasonsEvents() {
   const [busy, setBusy] = useState(false);
   const [notify, setNotify] = useState(true);
   const [teams, setTeams] = useState<{ kind: string; name: string; members: number; hidden: boolean }[]>([]);
+  const [winners, setWinners] = useState<Winner[]>([]);
   const [pushTitle, setPushTitle] = useState('');
   const [pushBody, setPushBody] = useState('');
 
@@ -509,6 +512,13 @@ export function SeasonsEvents() {
     setTeams((data ?? []) as typeof teams);
   }, []);
   useEffect(() => { supabase.rpc('admin_teams').then(({ data }) => setTeams((data ?? []) as typeof teams)); }, []);
+
+  const loadWinners = useCallback(() => supabase.rpc('admin_season_winners').then(({ data }) => setWinners((data ?? []) as Winner[])), []);
+  useEffect(() => { supabase.rpc('admin_season_winners').then(({ data }) => setWinners((data ?? []) as Winner[])); }, []);
+  const markPrize = async (w: Winner) => {
+    const { error } = await supabase.rpc('admin_team_prize', { p_season: w.season_id, p_kind: w.kind, p_name: w.name, p_sent: w.prize_status !== 'sent' });
+    if (error) Alert.alert('Error', friendlyError(error)); else loadWinners();
+  };
 
   const toggleTeam = async (t: { kind: string; name: string; hidden: boolean }) => {
     const { error } = await supabase.rpc('admin_hide_team', { p_kind: t.kind, p_name: t.name, p_hidden: !t.hidden });
@@ -540,7 +550,7 @@ export function SeasonsEvents() {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Start new season', style: 'destructive', onPress: async () => {
         const { error } = await supabase.rpc('admin_start_season', { p_name: newSeason.trim() });
-        if (error) Alert.alert('Error', friendlyError(error)); else { setNewSeason(''); load(); }
+        if (error) Alert.alert('Error', friendlyError(error)); else { setNewSeason(''); load(); loadWinners(); }
       } },
     ]);
   };
@@ -627,8 +637,25 @@ export function SeasonsEvents() {
         ))}
       </Card>
 
+      {winners.length > 0 && (
+        <Card title={`Last season’s winners · ${winners[0].season_name}`} sub="Winning teams get the team prize. Mark it sent once you’ve delivered it.">
+          {(['dorm', 'greek'] as const).map((k) => winners.filter((w) => w.kind === k).length > 0 && (
+            <View key={k} style={{ marginTop: 8 }}>
+              <Text style={s.small}>{k === 'dorm' ? 'Dorms' : 'Greek'}</Text>
+              {winners.filter((w) => w.kind === k).map((w) => (
+                <View key={w.name} style={s.line}>
+                  <Text style={s.lineLabel}>{w.rank}. {w.name}</Text>
+                  <Text style={s.small}>{w.members} members · avg {w.avg_points}</Text>
+                  {w.rank === 1 && <Button small variant={w.prize_status === 'sent' ? 'secondary' : 'primary'} label={w.prize_status === 'sent' ? 'Sent' : 'Mark sent'} onPress={() => markPrize(w)} />}
+                </View>
+              ))}
+            </View>
+          ))}
+        </Card>
+      )}
+
       <Card title="Season" sub={season ? `${season.name} · started ${short(season.started_at)}` : undefined}>
-        <Text style={s.small}>At the end of the semester, start a new season. Everyone gets a recap of where they finished, and scores reset to 1,000.</Text>
+        <Text style={s.small}>At the end of the semester, start a new season. Everyone gets a recap of where they finished, and scores reset to 1,000. The top 25 (people who show on the leaderboard) get a Top 25 / Top 10 / #1 badge, and everyone in the winning dorm and chapter gets a Champs badge. Badges stay on profiles for good.</Text>
         <Input value={newSeason} onChangeText={setNewSeason} placeholder="Season 2 · Spring ’27" style={{ marginTop: 10 }} />
         <Button label="End season and start new one" variant="danger" onPress={startSeason} disabled={newSeason.trim().length < 3} style={{ marginTop: 10 }} />
       </Card>

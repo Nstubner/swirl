@@ -7,9 +7,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import Svg, { Circle, Defs, LinearGradient as SvgGradient, Path, Stop } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowDown, ArrowUp, Award, BadgeCheck, Check, Minus, X } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, Award, BadgeCheck, Check, Minus, Trophy, X } from 'lucide-react-native';
 import { C, F, GRAD } from '@/lib/theme';
-import { BADGES, tierById, type TierId } from '@/lib/constants';
+import { badgeInfo, tierById, type TierId } from '@/lib/constants';
 import { useExplain } from '@/lib/explain-context';
 
 /* ---------- Swirl logo ---------- */
@@ -202,16 +202,18 @@ export function VerifiedCheck({ size = 18, explain = true }: { size?: number; ex
 /** Founding Member / Swirl Founder badges. */
 export function Badges({ ids }: { ids?: string[] | null }) {
   const ex = useExplain();
-  const list = (ids ?? []).filter((id) => BADGES[id]);
+  // Best first: #1 and team wins, then other season badges, then invite badges.
+  const list = (ids ?? []).map((id) => ({ id, b: badgeInfo(id) })).filter((x) => x.b)
+    .sort((a, b) => Number(b.b!.gold) - Number(a.b!.gold) || Number(b.b!.kind !== 'invite') - Number(a.b!.kind !== 'invite'));
   if (!list.length) return null;
   return (
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-      {list.map((id) => (
+      {list.map(({ id, b }) => (
         <Pressable key={id} onPress={() => ex('badge', { id })} hitSlop={6} accessibilityRole="button">
-          <LinearGradient colors={id === 'founder' ? ['#FFC93C', '#FF8A5B'] : GRAD} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          <LinearGradient colors={b!.gold ? ['#FFC93C', '#FF8A5B'] : GRAD} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
             style={[styles.badge, { paddingLeft: 7 }]}>
-            <Award size={12} color="#fff" />
-            <Text style={{ fontFamily: F.bold, fontSize: 12, color: '#fff' }}>{BADGES[id].label}</Text>
+            {b!.kind === 'invite' ? <Award size={12} color="#fff" /> : <Trophy size={12} color="#fff" />}
+            <Text style={{ fontFamily: F.bold, fontSize: 12, color: '#fff' }}>{b!.label}</Text>
           </LinearGradient>
         </Pressable>
       ))}

@@ -156,6 +156,8 @@ export const DORMS = [
   'Farrand Hall', 'Hallett Hall', 'Kittredge West', 'Libby Hall', 'Sewall Hall', 'Smith Hall', 'Stearns West',
   'Willard Hall', 'Williams Village North', 'The Hill (off campus)', 'Off campus',
 ];
+/** These are in the dorm list so people can say where they live, but they don't compete on the Dorms board. */
+export const OFF_CAMPUS = ['The Hill (off campus)', 'Off campus'];
 
 export const CAMPUS_SPOTS = [
   'Norlin Library', 'Norlin Quad', 'UMC', 'Farrand Field', 'Folsom Field', 'Rec Center', 'C4C',
@@ -254,6 +256,22 @@ export const BADGES: Record<string, { label: string; body: string }> = {
   founding: { label: 'Founding Member', body: 'Invited 5+ friends to Swirl in its first season.' },
   founder: { label: 'Swirl Founder', body: 'Invited 10+ friends. One of the people who built Swirl at CU.' },
 };
+
+/** Season-end badges look like 's1_top25'. Returns the label and explanation for any badge id, or null. */
+export function badgeInfo(id: string): { label: string; body: string; kind: 'invite' | 'season' | 'team'; gold: boolean } | null {
+  const fixed = BADGES[id];
+  if (fixed) return { ...fixed, kind: 'invite', gold: id === 'founder' };
+  const m = /^s(\d+)_(top1|top10|top25|dorm|greek)$/.exec(id);
+  if (!m) return null;
+  const n = m[1];
+  switch (m[2]) {
+    case 'top1': return { label: `#1 · Season ${n}`, body: `Finished #1 on the CU Boulder leaderboard in Season ${n}.`, kind: 'season', gold: true };
+    case 'top10': return { label: `Top 10 · Season ${n}`, body: `Finished in the top 10 on the campus leaderboard in Season ${n}.`, kind: 'season', gold: false };
+    case 'top25': return { label: `Top 25 · Season ${n}`, body: `Finished in the top 25 on the campus leaderboard in Season ${n}.`, kind: 'season', gold: false };
+    case 'dorm': return { label: `Dorm Champs · S${n}`, body: `Their dorm won the Dorms board in Season ${n}.`, kind: 'team', gold: true };
+    default: return { label: `Greek Champs · S${n}`, body: `Their chapter won the Greek board in Season ${n}.`, kind: 'team', gold: true };
+  }
+}
 
 /** Link included when people share their invite code. Set this to your TestFlight or App Store link once you have it. */
 export const APP_LINK = '';

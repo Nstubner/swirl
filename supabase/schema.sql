@@ -153,6 +153,21 @@ create table if not exists public.season_results (
   primary key (season_id, user_id)
 );
 
+-- Final team standings for each finished season (Dorms and Greek boards).
+create table if not exists public.season_team_results (
+  season_id int  not null references public.seasons(id) on delete cascade,
+  kind      text not null check (kind in ('dorm','greek')),
+  name      text not null,
+  rank      int  not null,
+  members   int  not null,
+  avg_points int not null,
+  prize_status text not null default 'new' check (prize_status in ('new','sent')),
+  primary key (season_id, kind, name)
+);
+alter table public.season_team_results enable row level security;
+drop policy if exists "read team results" on public.season_team_results;
+create policy "read team results" on public.season_team_results for select to authenticated using (true);
+
 create table if not exists public.events (
   id          serial primary key,
   name        text not null,
@@ -1004,13 +1019,30 @@ language sql stable security definer set search_path = public as $$
     and not coalesce(case when p_kind = 'dorm' then src.dorm = me.dorm else src.greek = me.greek end, false)
 $$;
 
+-- Same as team_points, but over a whole season instead of the last 7 days.
+create or replace function public.team_points_between(p_user uuid, p_kind text, p_from timestamptz, p_to timestamptz) returns int
+language sql stable security definer set search_path = public as $$
+  select coalesce(round(sum(case when p_kind = 'greek' and e.reason in ('like','super','pass') then e.delta * 0.5 else e.delta end)), 0)::int
+  from score_events e
+  join profiles me on me.id = p_user
+  left join profiles src on src.id = e.source_user_id
+  where e.user_id = p_user and e.reason <> 'season' and e.created_at >= p_from and e.created_at < p_to
+    and not coalesce(case when p_kind = 'dorm' then src.dorm = me.dorm else src.greek = me.greek end, false)
+$$;
+
+-- Off-campus choices aren't dorms, so they don't compete on the Dorms board.
+create or replace function public.is_real_dorm(p_dorm text) returns boolean
+language sql immutable as $$
+  select p_dorm is not null and p_dorm <> '' and p_dorm not in ('Off campus', 'The Hill (off campus)')
+$$;
+
 create or replace function public.get_dorm_board()
 returns table (rank int, dorm text, members int, avg_week int, is_mine boolean)
 language sql stable security definer set search_path = public as $$
   with people as (
     select p.dorm, team_points(p.id, 'dorm') as week
     from profiles p
-    where p.onboarded and not p.banned and not p.paused and p.dorm is not null and p.dorm <> ''
+    where p.onboarded and not p.banned and not p.paused and is_real_dorm(p.dorm)
       and not exists (select 1 from hidden_teams h where h.kind = 'dorm' and h.name = p.dorm)
   ),
   dorms as (
@@ -1290,6 +1322,81 @@ begin
 end $$;
 
 -- End the current season (saves everyone's final rank) and start a new one at 1,000.
+-- Season-end badges. Runs when an admin starts a new season, before scores reset.
+--   Leaderboard: #1, Top 10, Top 25 (only people who show on the leaderboard: not hidden or paused).
+--   Teams: everyone in the winning dorm and the winning Greek chapter (5+ members, season-long average).
+-- Badge ids look like 's1_top25' and stay on the profile for good.
+create or replace function public.award_season(p_season int) returns void
+language plpgsql security definer set search_path = public as $$
+declare st timestamptz; r record; label text;
+begin
+  select started_at into st from seasons where id = p_season;
+  if st is null or exists (select 1 from season_team_results where season_id = p_season) then return; end if;
+
+  for r in
+    select p.id, rank() over (order by coalesce(s.score, 1000) desc, p.created_at) as rk
+    from profiles p left join scores s on s.user_id = p.id
+    where p.onboarded and not p.banned and not p.paused and p.visibility <> 'hidden'
+    order by 2
+  loop
+    exit when r.rk > 25;
+    label := case when r.rk = 1 then 'top1' when r.rk <= 10 then 'top10' else 'top25' end;
+    update profiles set badges = array_append(coalesce(badges, '{}'), 's' || p_season || '_' || label)
+      where id = r.id and not ('s' || p_season || '_' || label = any(coalesce(badges, '{}')));
+    perform send_push(r.id, 'Season over 🏆',
+      case when r.rk = 1 then 'You finished #1 on the campus leaderboard!' else 'You finished in the ' || case when r.rk <= 10 then 'Top 10' else 'Top 25' end || ' this season. Your badge is on your profile.' end,
+      '/profile');
+  end loop;
+
+  insert into season_team_results (season_id, kind, name, rank, members, avg_points)
+  select p_season, kind, name, (rank() over (partition by kind order by avg_points desc, name))::int, members, avg_points
+  from (
+    select 'dorm' as kind, p.dorm as name, count(*)::int as members, round(avg(team_points_between(p.id, 'dorm', st, now())))::int as avg_points
+    from profiles p
+    where p.onboarded and not p.banned and is_real_dorm(p.dorm)
+      and not exists (select 1 from hidden_teams h where h.kind = 'dorm' and h.name = p.dorm)
+    group by p.dorm having count(*) >= 5
+    union all
+    select 'greek', p.greek, count(*)::int, round(avg(team_points_between(p.id, 'greek', st, now())))::int
+    from profiles p
+    where p.onboarded and not p.banned and p.greek is not null and p.greek <> ''
+      and not exists (select 1 from hidden_teams h where h.kind = 'greek' and h.name = p.greek)
+    group by p.greek having count(*) >= 5
+  ) t;
+
+  for r in
+    select p.id, t.kind, t.name from season_team_results t
+    join profiles p on (t.kind = 'dorm' and p.dorm = t.name) or (t.kind = 'greek' and p.greek = t.name)
+    where t.season_id = p_season and t.rank = 1 and p.onboarded and not p.banned
+  loop
+    update profiles set badges = array_append(coalesce(badges, '{}'), 's' || p_season || '_' || r.kind)
+      where id = r.id and not ('s' || p_season || '_' || r.kind = any(coalesce(badges, '{}')));
+    perform send_push(r.id, 'Your team won 🏆', r.name || ' finished #1 this season. Champions badge unlocked.', '/leaderboard');
+  end loop;
+end $$;
+
+-- Admin: last finished season's winners, so you know who gets the team prize.
+create or replace function public.admin_season_winners()
+returns table (season_id int, season_name text, kind text, name text, rank int, members int, avg_points int, prize_status text)
+language plpgsql stable security definer set search_path = public as $$
+#variable_conflict use_column
+begin
+  if not is_admin() then raise exception 'Admins only'; end if;
+  return query
+  select t.season_id, s.name, t.kind, t.name, t.rank, t.members, t.avg_points, t.prize_status
+  from season_team_results t join seasons s on s.id = t.season_id
+  where t.season_id = (select max(season_id) from season_team_results) and t.rank <= 3
+  order by t.kind, t.rank;
+end $$;
+
+create or replace function public.admin_team_prize(p_season int, p_kind text, p_name text, p_sent boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'Admins only'; end if;
+  update season_team_results set prize_status = case when p_sent then 'sent' else 'new' end
+  where season_id = p_season and kind = p_kind and name = p_name;
+end $$;
+
 create or replace function public.admin_start_season(p_name text) returns void
 language plpgsql security definer set search_path = public as $$
 declare cur int;
@@ -1304,6 +1411,7 @@ begin
     from profiles p left join scores s on s.user_id = p.id
     where p.onboarded and not p.banned
     on conflict do nothing;
+    perform award_season(cur);
     update seasons set ended_at = now() where id = cur;
   end if;
   insert into score_events (user_id, delta, reason) select user_id, 1000 - score, 'season' from scores where score <> 1000;
@@ -1440,8 +1548,10 @@ grant execute on function
   public.admin_verifications(), public.admin_review_verification(uuid, boolean), public.admin_notify_all(text, text),
   public.admin_teams(), public.admin_hide_team(text, text, boolean),
   public.mark_read(uuid), public.log_error(text, text, text, text, text), public.admin_errors(int),
-  public.send_feedback(text, text), public.admin_feedback(int), public.admin_feedback_done(bigint, boolean)
+  public.send_feedback(text, text), public.admin_feedback(int), public.admin_feedback_done(bigint, boolean),
+  public.admin_season_winners(), public.admin_team_prize(int, text, text, boolean)
   to authenticated;
+revoke execute on function public.award_season(int) from public, anon, authenticated;
 revoke execute on function public.apply_score(uuid, int, text, uuid) from public, anon, authenticated;
 revoke execute on function public.credit_invite(uuid) from public, anon, authenticated;
 revoke execute on function public.send_push(uuid, text, text, text) from public, anon, authenticated;
