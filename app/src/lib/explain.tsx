@@ -18,7 +18,7 @@ const pts = (n: number) => (n > 0 ? `+${n}` : `−${Math.abs(n)}`);
 
 const ENTRIES: Record<string, (ctx: Ctx) => Entry> = {
   score: () => ({
-    title: 'Your Swirl Score',
+    title: 'Your score',
     summary: 'Points that go up when people like you and when you’re a good match to talk to.',
     bullets: ['Everyone starts at 1,000 each semester.', 'Only you see your exact number (unless you choose Public).', 'It never drops below 500.'],
   }),
@@ -85,10 +85,34 @@ const ENTRIES: Record<string, (ctx: Ctx) => Entry> = {
     rows: VISIBILITY.map((v) => [v.label, v.id === 'public' ? 'rank + score' : v.id === 'tier' ? 'rank + badge only' : 'not on the board'] as [string, string]),
   }),
   discover: () => ({
-    title: 'Discover',
+    title: 'How Discover works',
     summary: 'Scroll through someone’s whole profile, then decide.',
-    rows: [['♥ on a photo or prompt', 'like it (add a comment if you want)'], ['✕', 'pass'], ['★', 'Super Like']],
-    bullets: ['If you both like each other, it’s a match.', 'Your comment becomes the first message.', 'Use the filter button to narrow who you see.'],
+    rows: [
+      ['Swipe right', 'like their profile'],
+      ['Swipe left or ✕', 'pass'],
+      ['Double-tap or ♥', 'like a photo or answer, with an optional comment'],
+      ['★', 'Super Like (they see it first)'],
+    ],
+    bullets: [
+      'Who you see: mostly people near your score, mixed with others so it never gets stale.',
+      'People who Super Liked you and Boosted profiles come first.',
+      'Only people who’d want to see you show up, based on who you each want to see.',
+      'If you both like each other, it’s a match. Your comment becomes the first message.',
+      'Use the filter button to narrow by year, what people are looking for, or verified only.',
+    ],
+  }),
+  why_seeing: (ctx) => ({
+    title: `Why you’re seeing ${String(ctx?.name ?? 'them')}`,
+    summary: 'Discover mostly shows people near your score, plus a mix of others, so you see people you’re likely to match with.',
+    rows: [
+      ['Similar rank', 'their score is close to yours'],
+      ['Both in…', 'you share a class, dorm or spot'],
+      ['Interests in common', 'you picked some of the same interests'],
+      ['Super liked you', 'they used a Super Like on you'],
+      ['Boosted', 'they earned a Boost by inviting friends'],
+      ['New to Swirl', 'they joined in the last few days'],
+    ],
+    bullets: ['A regular like stays secret until you match, or until you unlock Likes you.'],
   }),
   like_comment: () => ({
     title: 'Liking with a comment',

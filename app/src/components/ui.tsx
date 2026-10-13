@@ -1,7 +1,8 @@
-import { useId, type ReactNode } from 'react';
+import { useEffect, useId, type ReactNode } from 'react';
+import Animated, { useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import {
   ActivityIndicator, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
-  type StyleProp, type TextInputProps, type TextStyle, type ViewStyle,
+  type DimensionValue, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
@@ -40,13 +41,25 @@ export function SwirlGlyph({ size = 28, stroke = 5, color }: { size?: number; st
   );
 }
 
-export function Wordmark({ size = 24 }: { size?: number }) {
+export function Wordmark({ size = 24, glyphOnly, textOnly }: { size?: number; glyphOnly?: boolean; textOnly?: boolean }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }} accessibilityLabel="Swirl">
-      <SwirlGlyph size={size * 1.08} stroke={5.5} />
-      <Text style={{ fontFamily: F.display, fontSize: size, color: C.text, letterSpacing: -0.5 }}>swirl</Text>
+      {!textOnly && <SwirlGlyph size={size * 1.08} stroke={5.5} />}
+      {!glyphOnly && <Text style={{ fontFamily: F.display, fontSize: size, color: C.text, letterSpacing: -0.5, marginLeft: textOnly ? 6 : 0 }}>swirl</Text>}
     </View>
   );
+}
+
+/** Gray placeholder that gently pulses while content loads (still when Reduce Motion is on). */
+export function Skeleton({ height, width = '100%', radius = 10, style }: { height: number; width?: DimensionValue; radius?: number; style?: StyleProp<ViewStyle> }) {
+  const reduce = useReducedMotion();
+  const pulse = useSharedValue(0.55);
+  useEffect(() => {
+    if (reduce) return;
+    pulse.set(withRepeat(withTiming(1, { duration: 750 }), -1, true));
+  }, [reduce, pulse]);
+  const anim = useAnimatedStyle(() => ({ opacity: pulse.get() }));
+  return <Animated.View style={[{ height, width, borderRadius: radius, backgroundColor: C.surface2 }, anim, style]} accessibilityLabel="Loading" />;
 }
 
 /* ---------- Layout + text ---------- */
@@ -275,7 +288,7 @@ export function Sheet({ visible, onClose, title, children }: { visible: boolean;
         {title && (
           <View style={styles.sheetHead}>
             <Text style={{ fontFamily: F.display, fontSize: 21, color: C.text, flex: 1 }}>{title}</Text>
-            <Pressable onPress={onClose} accessibilityLabel="Close" style={styles.closeBtn}><X size={18} color={C.text} /></Pressable>
+            <Pressable onPress={onClose} accessibilityLabel="Close" hitSlop={8} style={styles.closeBtn}><X size={18} color={C.text} /></Pressable>
           </View>
         )}
         <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" bounces={false} showsVerticalScrollIndicator={false}>

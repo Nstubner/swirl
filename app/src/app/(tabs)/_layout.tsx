@@ -2,6 +2,7 @@ import { Tabs } from 'expo-router';
 import { Flame, MessageCircle, Trophy, User } from 'lucide-react-native';
 import { useExtras } from '@/lib/extras';
 import Intro from '@/components/Intro';
+import { ScoreToasts } from '@/components/Celebrate';
 import { C, F } from '@/lib/theme';
 
 export default function TabsLayout() {
@@ -27,6 +28,7 @@ export default function TabsLayout() {
         tabBarBadgeStyle: { backgroundColor: C.pink, color: '#fff', fontFamily: F.bold, fontSize: 11 } }} />
       <Tabs.Screen name="profile" options={{ title: 'Profile', tabBarIcon: ({ color }) => <User size={24} color={color} /> }} />
     </Tabs>
+    <ScoreToasts />
     </>
   );
 }

@@ -39,7 +39,7 @@ export default function Preview() {
         <Eye size={14} color="#fff" />
         <Text style={{ fontFamily: F.semibold, fontSize: 12, color: '#fff' }}>How others see you</Text>
       </Explain>
-      <Pressable onPress={close} style={[styles.close, { top }]} accessibilityLabel="Close"><X size={20} color="#fff" /></Pressable>
+      <Pressable onPress={close} hitSlop={8} style={[styles.close, { top }]} accessibilityLabel="Close"><X size={20} color="#fff" /></Pressable>
       <View style={[styles.bottom, { paddingBottom: insets.bottom + 12 }]}>
         <Button label="Edit profile" icon={<Pencil size={16} color={C.text} />} onPress={() => { router.back(); router.push('/edit'); }} />
       </View>

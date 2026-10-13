@@ -77,6 +77,17 @@ create table if not exists public.score_events (
   created_at     timestamptz not null default now()
 );
 create index if not exists score_events_user_time on public.score_events (user_id, created_at desc);
+
+-- What powers the live "+8 · someone liked your photo" pop-ups. No names, just the points and why.
+create table if not exists public.score_feed (
+  id         bigserial primary key,
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  delta      int not null,
+  reason     text not null,
+  item       text,
+  created_at timestamptz not null default now()
+);
+create index if not exists score_feed_user_time on public.score_feed (user_id, created_at desc);
 alter table public.score_events drop constraint if exists score_events_reason_check;
 alter table public.score_events add constraint score_events_reason_check
   check (reason in ('like','super','pass','reply','convo','date','ghost','reset','season'));
@@ -519,8 +530,9 @@ create policy "update own profile" on public.profiles for update to authenticate
 drop policy if exists "read own score" on public.scores;
 create policy "read own score" on public.scores for select to authenticated using (user_id = auth.uid());
 
+-- Score history is read only through server functions: rows name who liked you (source_user_id),
+-- and "Likes you" is a reward for inviting friends.
 drop policy if exists "read own score events" on public.score_events;
-create policy "read own score events" on public.score_events for select to authenticated using (user_id = auth.uid());
 
 drop policy if exists "read own swipes" on public.swipes;
 create policy "read own swipes" on public.swipes for select to authenticated using (swiper_id = auth.uid());
@@ -590,20 +602,25 @@ $$;
 -- ---------- Discover deck ----------------------------------------------------
 
 -- People you haven't swiped on, who you'd see and who'd see you.
--- Super Likes on you come first, then Boosted profiles, then newest.
+-- Order: people who Super Liked you, then Boosted profiles, then mostly people near your score
+-- (with some shuffle so you still see a mix), with a small bump for people who already liked you.
 drop function if exists public.get_deck(int);
 create function public.get_deck(p_limit int default 30)
 returns table (id uuid, name text, age int, gender text, pronouns text, major text, grad_year int, bio text,
                prompts jsonb, interests text[], classes text[], dorm text, spots text[], photos text[],
                tier text, super_liked_me boolean, badges text[], captions text[], looking_for text, greek text,
-               verified boolean, liked_me_item text, liked_me_comment text, photo_locations text[], fav_spot text, fav_order text)
-language sql stable security definer set search_path = public as $$
-  with me as (select * from profiles where id = auth.uid())
+               verified boolean, liked_me_item text, liked_me_comment text, photo_locations text[], fav_spot text, fav_order text,
+               near_rank boolean, is_new boolean, boosted boolean)
+language sql volatile security definer set search_path = public as $$
+  with me as (select pr.*, coalesce((select score from scores where user_id = pr.id), 1000) as my_score from profiles pr where pr.id = auth.uid())
   select p.id, p.name, date_part('year', age(p.birthday))::int, p.gender, p.pronouns, p.major, p.grad_year, p.bio,
          p.prompts, p.interests, p.classes, p.dorm, p.spots, p.photos,
          case when p.visibility = 'hidden' then null else tier_for(coalesce(s.score, 1000)) end,
          coalesce(x.kind = 'super', false), p.badges, p.captions, p.looking_for, p.greek, p.verified,
-         x.item, x.comment, p.photo_locations, p.fav_spot, p.fav_order
+         x.item, x.comment, p.photo_locations, p.fav_spot, p.fav_order,
+         p.visibility <> 'hidden' and abs(coalesce(s.score, 1000) - me.my_score) <= 150,
+         p.created_at > now() - interval '3 days',
+         coalesce(p.boost_until, '-infinity') > now()
   from profiles p
   cross join me
   left join scores s on s.user_id = p.id
@@ -619,7 +636,7 @@ language sql stable security definer set search_path = public as $$
     and (coalesce((me.filters->>'verified_only')::boolean, false) = false or p.verified)
   order by coalesce(x.kind = 'super', false) desc,
            (coalesce(p.boost_until, '-infinity') > now()) desc,
-           p.created_at desc
+           abs(coalesce(s.score, 1000) - me.my_score) + random() * 250 - case when x.swiper_id is not null then 120 else 0 end
   limit p_limit
 $$;
 
@@ -1530,6 +1547,30 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 do $$ begin
   alter publication supabase_realtime add table public.matches;
+exception when duplicate_object then null; end $$;
+-- Live "+8 · someone liked your photo" pop-ups. Each person only receives their own rows (row-level security).
+alter table public.score_feed enable row level security;
+drop policy if exists "read own score feed" on public.score_feed;
+create policy "read own score feed" on public.score_feed for select to authenticated using (user_id = auth.uid());
+
+create or replace function public.after_score_event() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare it text;
+begin
+  if new.delta <= 0 or new.reason not in ('like','super','reply','convo','date') then return new; end if;
+  if new.reason in ('like','super') then
+    select item into it from swipes where swiper_id = new.source_user_id and target_id = new.user_id;
+  end if;
+  insert into score_feed (user_id, delta, reason, item) values (new.user_id, new.delta, new.reason, it);
+  delete from score_feed where user_id = new.user_id and created_at < now() - interval '7 days';
+  return new;
+end $$;
+drop trigger if exists score_events_after_insert on public.score_events;
+create trigger score_events_after_insert after insert on public.score_events
+  for each row execute function public.after_score_event();
+
+do $$ begin
+  alter publication supabase_realtime add table public.score_feed;
 exception when duplicate_object then null; end $$;
 
 -- ---------- Permissions -----------------------------------------------------------

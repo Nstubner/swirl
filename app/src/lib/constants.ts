@@ -74,6 +74,9 @@ export type DeckPerson = {
   liked_me_comment?: string | null;
   i_swiped?: boolean;
   liked_me?: boolean;
+  near_rank?: boolean;
+  is_new?: boolean;
+  boosted?: boolean;
   photo_locations?: string[];
   fav_spot?: string | null;
   fav_order?: string | null;
@@ -105,7 +108,7 @@ export const SHOW_ME: { id: ShowMe; label: string }[] = [
   { id: 'everyone', label: 'Everyone' },
 ];
 export const VISIBILITY: { id: Visibility; label: string; body: string }[] = [
-  { id: 'public', label: 'Public', body: 'Your rank and Swirl Score show on the campus leaderboard.' },
+  { id: 'public', label: 'Public', body: 'Your rank and score show on the campus leaderboard.' },
   { id: 'tier', label: 'Tier only', body: 'You show on the leaderboard with your tier badge instead of your score.' },
   { id: 'hidden', label: 'Hidden', body: "You're off the leaderboard, and your tier badge stays private." },
 ];
@@ -227,6 +230,21 @@ export function overlapTags(me: Pick<Profile, 'classes' | 'dorm' | 'spots'> | nu
   }
   them.spots?.forEach((s) => me.spots.includes(s) && tags.push(`Both love ${s}`));
   return tags;
+}
+
+/** Short reasons someone is in your Discover feed, e.g. ["Similar rank", "Both in ECON 2010"]. Never reveals a plain like. */
+export function whyReasons(me: Profile | null, p: DeckPerson): string[] {
+  const out: string[] = [];
+  if (p.super_liked_me) out.push('Super liked you');
+  if (p.boosted) out.push('Boosted');
+  if (p.near_rank) out.push('Similar rank');
+  out.push(...overlapTags(me, p).slice(0, 2));
+  if (me?.interests?.length) {
+    const shared = p.interests.filter((i) => me.interests.includes(i));
+    if (shared.length >= 2) out.push(`${shared.length} interests in common`);
+  }
+  if (p.is_new) out.push('New to Swirl');
+  return out.slice(0, 4);
 }
 
 export function ageFrom(birthday: string | null) {

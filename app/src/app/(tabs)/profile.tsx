@@ -1,3 +1,4 @@
+import TabTip from '@/components/TabTip';
 import { useCallback, useId, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View, useWindowDimensions } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
@@ -162,7 +163,7 @@ export default function ProfileTab() {
         <LinearGradient colors={GRAD} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.scoreCard}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <Explain k="score">
-              <Text style={styles.scoreLabel}>Swirl Score ⓘ</Text>
+              <Text style={styles.scoreLabel}>Your score ⓘ</Text>
               <Text style={styles.score}>{info ? fmt(score) : '—'}</Text>
             </Explain>
             <View style={{ alignItems: 'flex-end', gap: 8 }}>
@@ -247,7 +248,7 @@ export default function ProfileTab() {
             <View style={{ flex: 1 }}>
               <Text style={styles.boxTitle}>{last.name}</Text>
               <Text style={{ fontFamily: F.body, fontSize: 13, color: C.muted, marginTop: 2 }}>
-                Finished {last.rank <= 25 ? `#${last.rank}` : topPct(last.rank, last.total).toLowerCase()} · {fmt(last.score)} pts · {tierById(last.tier).name}
+                Finished {last.rank <= 25 ? `#${last.rank}` : topPct(last.rank, last.total).toLowerCase()} · score {fmt(last.score)} · {tierById(last.tier).name}
               </Text>
             </View>
           </Explain>
@@ -315,7 +316,7 @@ export default function ProfileTab() {
           )}
           <MenuRow icon={<Pencil size={18} color={C.text} />} label="Edit profile" sub="Photos, prompts, interests, campus" onPress={() => router.push('/edit')} />
           <MenuRow icon={<Gift size={18} color={C.text} />} label="Invite friends" sub="Earn Super Likes, a Boost, badges and a hoodie" onPress={() => router.push('/invite')} />
-          <MenuRow icon={<Calculator size={18} color={C.text} />} label="How scoring works" onPress={() => explain('scoring')} />
+          <MenuRow icon={<Calculator size={18} color={C.text} />} label="How Swirl works" sub="Who you see, your score, teams, seasons" onPress={() => router.push('/how')} />
           <MenuRow icon={<ShieldCheck size={18} color={C.text} />} label="Safety tips" onPress={() => setSafety(true)} />
           <MenuRow icon={<LifeBuoy size={18} color={C.text} />} label="Help & support" sub="Quick answers or message the Swirl team" onPress={() => router.push('/help')} />
           <MenuRow icon={<FileText size={18} color={C.text} />} label="Privacy Policy" onPress={() => router.push('/legal/privacy')} />
@@ -347,6 +348,9 @@ export default function ProfileTab() {
           <Button label="Got it" variant="secondary" onPress={() => setSafety(false)} style={{ marginTop: 8 }} />
         </ScrollView>
       </Sheet>
+      <TabTip id="profile" title="Tap anything to learn more"
+        body="Tap your score, tier, badges or any ⓘ to see how it works. The full guide is in How Swirl works."
+        style={{ position: 'absolute', left: 16, right: 16, bottom: 16 }} />
     </Screen>
   );
 }

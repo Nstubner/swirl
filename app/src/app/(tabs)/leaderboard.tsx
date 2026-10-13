@@ -3,7 +3,10 @@ import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'rea
 import { router, useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Crown, EyeOff, Home, Users } from 'lucide-react-native';
-import { Avatar, Button, Chip, EmptyState, Loading, Movement, Screen, Segmented, Sheet, TierBadge } from '@/components/ui';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import * as Haptics from 'expo-haptics';
+import { Avatar, Button, Chip, EmptyState, Movement, Screen, Segmented, Sheet, Skeleton, TierBadge } from '@/components/ui';
+import TabTip from '@/components/TabTip';
 import EventBanner from '@/components/EventBanner';
 import { Explain, InfoButton } from '@/lib/explain';
 import { useExplain } from '@/lib/explain-context';
@@ -19,6 +22,24 @@ type Row = {
 };
 type TeamRow = { rank: number; name: string; members: number; avg_week: number; is_mine: boolean };
 type Mode = 'campus' | 'week' | 'class' | 'dorms' | 'greek';
+const MODES: { id: Mode; label: string }[] = [
+  { id: 'campus', label: 'Campus' }, { id: 'week', label: 'Week' }, { id: 'class', label: 'Class' }, { id: 'dorms', label: 'Dorms' }, { id: 'greek', label: 'Greek' },
+];
+
+function ListSkeleton() {
+  return (
+    <View style={{ padding: 16, gap: 14 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'flex-end', gap: 18, paddingVertical: 12 }}>
+        <Skeleton height={60} width={60} radius={30} /><Skeleton height={76} width={76} radius={38} /><Skeleton height={60} width={60} radius={30} />
+      </View>
+      {Array.from({ length: 6 }).map((_, i) => (
+        <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <Skeleton height={40} width={40} radius={20} /><Skeleton height={16} width="50%" /><View style={{ flex: 1 }} /><Skeleton height={16} width={48} />
+        </View>
+      ))}
+    </View>
+  );
+}
 
 export default function Leaderboard() {
   const { profile } = useAuth();
@@ -54,6 +75,16 @@ export default function Leaderboard() {
   }, [mode, grad]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  // Swipe left or right anywhere on the board to switch between Campus, Week, Class, Dorms and Greek.
+  const step = (d: 1 | -1) => {
+    const i = MODES.findIndex((m) => m.id === mode) + d;
+    if (i < 0 || i >= MODES.length) return;
+    Haptics.selectionAsync().catch(() => {});
+    setMode(MODES[i].id);
+  };
+  const swipe = Gesture.Pan().runOnJS(true).activeOffsetX([-30, 30]).failOffsetY([-12, 12])
+    .onEnd((e) => { if (e.translationX < -60 || e.velocityX < -700) step(1); else if (e.translationX > 60 || e.velocityX > 700) step(-1); });
 
   // Show the season recap once, the first time someone opens the leaderboard after a season ends.
   const last = extras?.last_season;
@@ -108,7 +139,7 @@ export default function Leaderboard() {
   let body;
   if (mode === 'dorms' || mode === 'greek') {
     const greek = mode === 'greek';
-    body = teams === null && !error ? <Loading /> : error ? <EmptyState title="Couldn't load this board" body={error} /> : !teams?.length ? (
+    body = teams === null && !error ? <ListSkeleton /> : error ? <EmptyState title="Couldn't load this board" body={error} /> : !teams?.length ? (
       <EmptyState icon={greek ? <Users size={26} color={C.text} /> : <Home size={26} color={C.text} />}
         title={greek ? 'No chapters on the board yet' : 'No dorms on the board yet'}
         body={greek ? 'A chapter shows up once 5 members are on Swirl. Add yours in Edit profile.' : 'A dorm shows up once 5 people from it are on Swirl. Invite your floor.'}
@@ -150,7 +181,7 @@ export default function Leaderboard() {
       />
     );
   } else if (rows === null && !error) {
-    body = <Loading />;
+    body = <ListSkeleton />;
   } else if (error) {
     body = <EmptyState title="Couldn't load the leaderboard" body={error} />;
   } else if (list.length === 0 && !meBelow) {
@@ -198,16 +229,17 @@ export default function Leaderboard() {
       </View>
       <EventBanner />
       <View style={{ paddingHorizontal: 16, gap: 10 }}>
-        <Segmented value={mode} onChange={setMode} options={[
-          { id: 'campus', label: 'Campus' }, { id: 'week', label: 'Week' }, { id: 'class', label: 'Class' }, { id: 'dorms', label: 'Dorms' }, { id: 'greek', label: 'Greek' },
-        ]} />
+        <Segmented value={mode} onChange={setMode} options={MODES} />
         {mode === 'class' && (
           <View style={{ flexDirection: 'row', gap: 8 }}>
             {GRAD_YEARS.map((y) => <Chip key={y} small label={String(y)} selected={grad === y} onPress={() => setGrad(y)} />)}
           </View>
         )}
       </View>
-      {body}
+      <GestureDetector gesture={swipe}><View style={{ flex: 1 }}>{body}</View></GestureDetector>
+      <TabTip id="leaderboard" title="How you move up"
+        body="Likes and real conversations raise your score. Passes barely count and nobody ever sees them. Swipe sideways to switch boards."
+        style={{ position: 'absolute', left: 16, right: 16, bottom: me && mode !== 'dorms' && mode !== 'greek' ? 96 : 16 }} />
       {me && mode !== 'dorms' && mode !== 'greek' && (
         <Pressable style={styles.mine} onPress={() => explain('rank', me.rank > 25 ? { top: topPct(me.rank, me.total) } : undefined)}>
           <View style={{ alignItems: 'center', minWidth: 64 }}>
@@ -223,7 +255,7 @@ export default function Leaderboard() {
               </>
             ) : (
               <>
-                <Text style={styles.mineTitle}>{me.value == null ? '' : mode === 'week' ? `${signed(me.value)} this week` : `${fmt(me.value)} pts`}</Text>
+                <Text style={styles.mineTitle}>{me.value == null ? '' : mode === 'week' ? `${signed(me.value)} this week` : `Score ${fmt(me.value)}`}</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><Movement move={me.move} /><Text style={styles.mineSub}>since midnight</Text></View>
               </>
             )}

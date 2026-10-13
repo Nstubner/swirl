@@ -7,7 +7,7 @@ export const C = {
   line: 'rgba(237,230,255,0.09)',
   text: '#F7F4FF',
   muted: '#ABA2C0',
-  faint: '#776E8C',
+  faint: '#8E86A3',
   up: '#25D094',
   down: '#FF5C73',
   card: '#FFFFFF',

@@ -325,7 +325,7 @@ export function Users() {
                 <Text style={s.lineLabel} numberOfLines={1}>{u.name ?? '(no name yet)'}{u.banned ? ' · banned' : ''}{!u.onboarded ? ' · unfinished' : ''}</Text>
                 <Text style={s.small} numberOfLines={1}>{u.email}</Text>
                 <Text style={s.small} numberOfLines={1}>
-                  {[u.grad_year ? CLASS_NAME[u.grad_year] : null, u.dorm, `${fmt(u.score)} pts`, `${u.invites} invites`, u.reports ? `${u.reports} reports` : null, `joined ${short(u.created_at)}`, `seen ${short(u.last_active_at)}`].filter(Boolean).join(' · ')}
+                  {[u.grad_year ? CLASS_NAME[u.grad_year] : null, u.dorm, `score ${fmt(u.score)}`, `${u.invites} invites`, u.reports ? `${u.reports} reports` : null, `joined ${short(u.created_at)}`, `seen ${short(u.last_active_at)}`].filter(Boolean).join(' · ')}
                 </Text>
               </View>
               <Pressable onPress={() => toggleBan(u)} style={s.iconBtn} accessibilityLabel={u.banned ? 'Unban' : 'Ban'}>

@@ -78,6 +78,7 @@ function RootStack() {
         <Stack.Screen name="likes" />
         <Stack.Screen name="verify-photo" />
         <Stack.Screen name="help" />
+        <Stack.Screen name="how" />
       </Stack.Protected>
     </Stack>
   );

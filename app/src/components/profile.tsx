@@ -1,15 +1,19 @@
-import { useState, type ReactNode } from 'react';
+import { useState, type ReactNode, type Ref } from 'react';
 import { Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View, Alert, useWindowDimensions } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, { useAnimatedStyle, useReducedMotion, useSharedValue, withSequence, withSpring, withTiming } from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ban, Flag, GraduationCap, Heart, Home, MapPin, Send, Star, Users } from 'lucide-react-native';
+import { Ban, Check, Flag, GraduationCap, Heart, Home, MapPin, Send, Sparkles, Star, Users } from 'lucide-react-native';
 import { C, F, GRAD } from '@/lib/theme';
 import {
-  CLASS_NAME, PROMPT_QUESTIONS, PTS, REPORT_REASONS, lookingLabel, overlapTags, type DeckPerson, type Profile,
+  CLASS_NAME, PROMPT_QUESTIONS, PTS, REPORT_REASONS, lookingLabel, overlapTags, whyReasons, type DeckPerson, type Profile,
 } from '@/lib/constants';
 import { supabase, friendlyError } from '@/lib/supabase';
 import { Explain } from '@/lib/explain';
 import { Avatar, Badges, Button, Chip, Sheet, SwirlGlyph, TierBadge, VerifiedCheck } from './ui';
+import { Confetti } from './Celebrate';
 
 const classOf = (y: number | null) => (y ? `class of ’${String(y).slice(-2)}` : '');
 const favQuestion = (spot?: string | null) => `Favorite thing to get at ${spot?.trim() || 'the Hill'}`;
@@ -31,9 +35,35 @@ export function describeItem(key: string | null | undefined, p: Pick<Profile, 'p
   return null;
 }
 
-function PhotoBlock({ uri, name, caption, location, width, onLike }: { uri?: string; name: string; caption?: string; location?: string; width: number; onLike?: () => void }) {
+/** Double-tap anything wrapped in this to like it. A heart pops where you tapped (skipped when Reduce Motion is on). */
+function DoubleTapLike({ onLike, children }: { onLike?: () => void; children: ReactNode }) {
+  const reduce = useReducedMotion();
+  const scale = useSharedValue(0);
+  const style = useAnimatedStyle(() => ({ opacity: scale.get() > 0 ? 1 : 0, transform: [{ scale: scale.get() }] }));
+  if (!onLike) return <>{children}</>;
+  const tap = Gesture.Tap().numberOfTaps(2).maxDelay(260).runOnJS(true).onEnd((_e, ok) => {
+    if (!ok) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (!reduce) scale.set(withSequence(withSpring(1.15, { damping: 9 }), withTiming(1, { duration: 120 }), withTiming(0, { duration: 220 })));
+    setTimeout(onLike, reduce ? 0 : 380);
+  });
   return (
-    <View>
+    <GestureDetector gesture={tap}>
+      <View>
+        {children}
+        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }, style]}>
+          <Heart size={96} color="#fff" fill={C.pink} strokeWidth={1.5} />
+        </Animated.View>
+      </View>
+    </GestureDetector>
+  );
+}
+
+function PhotoBlock({ uri, name, caption, location, width, onLike, hero }: {
+  uri?: string; name: string; caption?: string; location?: string; width: number; onLike?: () => void; hero?: ReactNode;
+}) {
+  return (
+    <DoubleTapLike onLike={onLike}>
       <View style={{ width, aspectRatio: 4 / 5, borderRadius: 20, overflow: 'hidden', backgroundColor: C.surface2 }}>
         {uri ? <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" transition={150} /> : (
           <LinearGradient colors={GRAD} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
@@ -46,10 +76,15 @@ function PhotoBlock({ uri, name, caption, location, width, onLike }: { uri?: str
             <Text style={{ fontFamily: F.semibold, fontSize: 12, color: '#fff' }} numberOfLines={1}>{location}</Text>
           </View>
         )}
+        {hero && (
+          <LinearGradient colors={['transparent', 'rgba(14,11,22,0.85)']} style={styles.heroShade} pointerEvents="none">
+            {hero}
+          </LinearGradient>
+        )}
         {onLike && <LikeButton onPress={onLike} style={{ position: 'absolute', right: 12, bottom: 12 }} />}
       </View>
       {!!caption && <Text style={styles.caption}>{caption}</Text>}
-    </View>
+    </DoubleTapLike>
   );
 }
 
@@ -63,12 +98,18 @@ function LikeButton({ onPress, style }: { onPress: () => void; style?: object })
 
 function PromptBlock({ q, question, a, onLike }: { q?: number; question?: string; a: string; onLike?: () => void }) {
   return (
+    <DoubleTapLike onLike={onLike}>
     <View style={styles.prompt}>
       <Text style={{ fontFamily: F.semibold, fontSize: 13, color: C.muted }}>{question ?? PROMPT_QUESTIONS[q ?? -1] ?? ''}</Text>
       <Text style={{ fontFamily: F.displayBold, fontSize: 24, lineHeight: 30, color: C.text, marginTop: 8, paddingRight: onLike ? 44 : 0 }}>{a}</Text>
       {onLike && <LikeButton onPress={onLike} style={{ position: 'absolute', right: 12, bottom: 12 }} />}
     </View>
+    </DoubleTapLike>
   );
+}
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return <Text style={styles.sectionLabel} accessibilityRole="header">{children}</Text>;
 }
 
 function InfoChip({ icon, text }: { icon: ReactNode; text: string }) {
@@ -84,14 +125,19 @@ function InfoChip({ icon, text }: { icon: ReactNode; text: string }) {
  * A full profile you scroll through top to bottom, like Hinge: photos mixed with prompts.
  * Pass onLike to show a heart on every photo and prompt.
  */
-export function ScrollProfile({ person, me, isMe, onLike, onReport, onBlock, header, footer, bottomPad = 40 }: {
+export function ScrollProfile({ person, me, isMe, onLike, onReport, onBlock, header, footer, bottomPad = 40, showWhy, scrollRef }: {
   person: DeckPerson; me: Profile | null; isMe?: boolean; onLike?: (item: LikeItem) => void;
   onReport?: () => void; onBlock?: () => void; header?: ReactNode; footer?: ReactNode; bottomPad?: number;
+  /** Show the "Why you're seeing them" line (Discover). */
+  showWhy?: boolean; scrollRef?: Ref<ScrollView>;
 }) {
   const { width } = useWindowDimensions();
   const w = Math.min(width, 520) - 32;
   const tags = isMe ? [] : overlapTags(me, person);
   const shared = new Set(isMe ? [] : me?.interests ?? []);
+  const inCommon = person.interests.filter((i) => shared.has(i));
+  const interests = [...inCommon, ...person.interests.filter((i) => !shared.has(i))];
+  const why = showWhy && !isMe ? whyReasons(me, person) : [];
   const photos = person.photos.length ? person.photos : [undefined];
   const captions = person.captions ?? [];
   const locations = person.photo_locations ?? [];
@@ -99,8 +145,15 @@ export function ScrollProfile({ person, me, isMe, onLike, onReport, onBlock, hea
   const looking = lookingLabel(person.looking_for);
   const theirLike = !isMe && (person.liked_me_comment || person.liked_me_item) ? describeItem(person.liked_me_item, me) : null;
 
+  const heroText = (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', paddingRight: onLike ? 64 : 0 }}>
+      <Text style={styles.heroName} numberOfLines={1}>{person.name}</Text>
+      {person.verified && <VerifiedCheck size={22} />}
+      {person.age != null && <Text style={styles.heroAge}>{person.age}</Text>}
+    </View>
+  );
   const photo = (i: number) => i < photos.length ? (
-    <PhotoBlock key={`p${i}`} uri={photos[i]} name={person.name} caption={captions[i]} location={locations[i]} width={w}
+    <PhotoBlock key={`p${i}`} uri={photos[i]} name={person.name} caption={captions[i]} location={locations[i]} width={w} hero={i === 0 ? heroText : undefined}
       onLike={onLike ? () => onLike({ key: `photo:${i}`, label: 'photo', photo: photos[i] }) : undefined} />
   ) : null;
   const prompt = (i: number) => i < prompts.length ? (
@@ -114,24 +167,47 @@ export function ScrollProfile({ person, me, isMe, onLike, onReport, onBlock, hea
 
   const about = (
     <View key="about" style={styles.card}>
-      {!!person.bio && <Text style={{ fontFamily: F.body, fontSize: 16, lineHeight: 23, color: C.text }}>{person.bio}</Text>}
-      {tags.length > 0 && (
-        <Explain k="overlap" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-          {tags.map((t) => <View key={t} style={styles.tagDark}><Text style={styles.tagDarkText}>{t}</Text></View>)}
-        </Explain>
+      {!!person.bio && (
+        <View style={{ gap: 6 }}>
+          <SectionLabel>About {isMe ? 'you' : person.name}</SectionLabel>
+          <Text style={{ fontFamily: F.body, fontSize: 16, lineHeight: 23, color: C.text }}>{person.bio}</Text>
+        </View>
       )}
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-        {person.interests.map((i) => (
-          <View key={i} style={[styles.interest, shared.has(i) && { borderColor: C.pink }]}>
-            <Text style={{ fontFamily: F.semibold, fontSize: 13, color: C.text }}>{i}</Text>
+      {tags.length > 0 && (
+        <View style={{ gap: 6 }}>
+          <SectionLabel>You two</SectionLabel>
+          <Explain k="overlap" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {tags.map((t) => <View key={t} style={styles.tagDark}><Text style={styles.tagDarkText}>{t}</Text></View>)}
+          </Explain>
+        </View>
+      )}
+      {interests.length > 0 && (
+        <View style={{ gap: 8 }}>
+          <SectionLabel>Interests</SectionLabel>
+          {inCommon.length > 0 && (
+            <Text style={{ fontFamily: F.semibold, fontSize: 13, color: C.pink }}>
+              You both like {inCommon.length === 1 ? inCommon[0] : `${inCommon.slice(0, -1).join(', ')} and ${inCommon[inCommon.length - 1]}`}
+            </Text>
+          )}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {interests.map((i) => {
+              const both = shared.has(i);
+              return (
+                <View key={i} style={[styles.interest, both && { borderColor: C.pink }]} accessibilityLabel={both ? `${i}, you both like this` : i}>
+                  {both && <Check size={13} color={C.pink} strokeWidth={3} />}
+                  <Text style={{ fontFamily: F.semibold, fontSize: 13, color: C.text }}>{i}</Text>
+                </View>
+              );
+            })}
           </View>
-        ))}
-      </View>
+        </View>
+      )}
     </View>
   );
 
   const campus = (
     <View key="campus" style={styles.card}>
+      <SectionLabel>Campus</SectionLabel>
       {[
         { icon: <GraduationCap size={16} color={C.muted} />, label: 'Classes', value: person.classes.join(', ') },
         { icon: <MapPin size={16} color={C.muted} />, label: 'Favorite spots', value: person.spots.join(', ') },
@@ -146,24 +222,28 @@ export function ScrollProfile({ person, me, isMe, onLike, onReport, onBlock, hea
   );
 
   // Hinge-style order: photo, prompt, photo, about, photo, prompt, photo, prompt, the rest.
-  const blocks = [photo(0), prompt(0), photo(1), about, photo(2), prompt(1), photo(3), prompt(2), fav, photo(4), photo(5),
+  const blocks = [prompt(0), photo(1), about, photo(2), prompt(1), photo(3), prompt(2), fav, photo(4), photo(5),
     ...prompts.slice(3).map((_, i) => prompt(i + 3)),
     (person.classes.length || person.spots.length) ? campus : null].filter(Boolean);
 
   return (
-    <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: bottomPad, gap: 14 }} showsVerticalScrollIndicator={false}>
+    <ScrollView ref={scrollRef} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: bottomPad, gap: 14 }} showsVerticalScrollIndicator={false}>
       {header}
-      <View style={{ paddingTop: 4 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <Text style={{ fontFamily: F.display, fontSize: 34, color: C.text }}>{person.name}</Text>
-          {person.verified && <VerifiedCheck size={22} />}
-          <Text style={{ fontFamily: F.semibold, fontSize: 24, color: C.muted }}>{person.age}</Text>
-        </View>
-        <View style={{ marginTop: 8, flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-          <TierBadge tier={person.tier} />
-          <Badges ids={person.badges} />
-        </View>
+      {photo(0)}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: -4 }}>
+        <TierBadge tier={person.tier} />
+        <Badges ids={person.badges} />
       </View>
+      {why.length > 0 && (
+        <Explain k="why_seeing" ctx={{ name: person.name }}>
+          <View style={styles.why}>
+            <Sparkles size={14} color={C.pink} />
+            <Text style={styles.whyText}>
+              <Text style={{ fontFamily: F.bold, color: C.text }}>Why you’re seeing {person.name}: </Text>{why.join(' · ')}
+            </Text>
+          </View>
+        </Explain>
+      )}
 
       {theirLike !== null || person.liked_me_comment ? (
         <Explain k={person.super_liked_me ? 'super_liked_me' : 'liked_me'}>
@@ -330,12 +410,19 @@ export function MatchScreen({ me, them, onMessage, onClose }: {
         <Button label="Send a message" variant="white" onPress={onMessage} />
         <Button label="Keep swiping" variant="ghost" onPress={onClose} />
       </View>
+      <Confetti />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   location: { position: 'absolute', left: 12, top: 12, maxWidth: '80%', flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(14,11,22,0.6)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
+  heroShade: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 16, paddingTop: 48, paddingBottom: 16 },
+  heroName: { fontFamily: F.display, fontSize: 34, color: '#fff', flexShrink: 1 },
+  heroAge: { fontFamily: F.semibold, fontSize: 26, color: 'rgba(255,255,255,0.85)' },
+  sectionLabel: { fontFamily: F.bold, fontSize: 12, color: C.muted, letterSpacing: 0.8, textTransform: 'uppercase' },
+  why: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: C.surface, borderRadius: 14, borderWidth: 1, borderColor: C.line, paddingHorizontal: 12, paddingVertical: 10 },
+  whyText: { flex: 1, fontFamily: F.body, fontSize: 13, lineHeight: 18, color: C.muted },
   caption: { fontFamily: F.medium, fontSize: 14, color: C.muted, marginTop: 8, paddingHorizontal: 4 },
   likeBtn: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
   prompt: { backgroundColor: C.surface, borderRadius: 20, padding: 20, paddingBottom: 26, borderWidth: 1, borderColor: C.line, minHeight: 120 },
@@ -344,7 +431,7 @@ const styles = StyleSheet.create({
   likedYou: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 18, padding: 12 },
   tagDark: { borderRadius: 999, borderWidth: 1.5, borderColor: C.pink, paddingVertical: 5, paddingHorizontal: 10 },
   tagDarkText: { fontFamily: F.semibold, fontSize: 13, color: C.text },
-  interest: { backgroundColor: C.surface2, borderRadius: 999, paddingVertical: 7, paddingHorizontal: 12, borderWidth: 1.5, borderColor: 'transparent' },
+  interest: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.surface2, borderRadius: 999, paddingVertical: 7, paddingHorizontal: 12, borderWidth: 1.5, borderColor: 'transparent' },
   miniPolaroid: { position: 'absolute', backgroundColor: '#fff', padding: 6, borderRadius: 18 },
   heart: { position: 'absolute', bottom: 0, width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', borderWidth: 4, borderColor: C.bg },
 });

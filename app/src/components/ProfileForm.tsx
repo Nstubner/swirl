@@ -225,7 +225,7 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
             return url ? (
               <View key={url} style={{ width: '31%', aspectRatio: 4 / 5, borderRadius: 16, overflow: 'hidden' }}>
                 <Image source={{ uri: url }} style={{ flex: 1 }} contentFit="cover" />
-                <Pressable onPress={() => removePhoto(url)} accessibilityLabel={`Remove photo ${i + 1}`}
+                <Pressable onPress={() => removePhoto(url)} hitSlop={10} accessibilityLabel={`Remove photo ${i + 1}`}
                   style={{ position: 'absolute', top: 6, right: 6, width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(14,11,22,0.6)', alignItems: 'center', justifyContent: 'center' }}>
                   <X size={14} color="#fff" />
                 </Pressable>

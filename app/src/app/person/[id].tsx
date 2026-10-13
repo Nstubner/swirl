@@ -94,7 +94,7 @@ export default function Person() {
           onLike={canAnswer ? setLikeItem : undefined}
           onReport={() => setReporting(true)} onBlock={block} />
       )}
-      <Pressable onPress={close} style={[styles.close, { top }]} accessibilityLabel="Close"><X size={20} color="#fff" /></Pressable>
+      <Pressable onPress={close} hitSlop={8} style={[styles.close, { top }]} accessibilityLabel="Close"><X size={20} color="#fff" /></Pressable>
       {canAnswer && (
         <View style={[styles.answer, { paddingBottom: insets.bottom + 12 }]}>
           <Button label="Pass" variant="secondary" icon={<X size={16} color={C.text} />} onPress={() => decide('pass')} disabled={busy} style={{ flex: 1 }} />

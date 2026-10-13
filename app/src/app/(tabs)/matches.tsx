@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { router, useFocusEffect } from 'expo-router';
-import { ChevronRight, Heart, Lock } from 'lucide-react-native';
+import { Ban, ChevronRight, Flag, Heart, HeartCrack, Lock, MessageCircle, User } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useExtras } from '@/lib/extras';
-import { Avatar, Button, EmptyState, Loading, Screen } from '@/components/ui';
+import { Avatar, Button, EmptyState, MenuRow, Screen, Sheet, Skeleton } from '@/components/ui';
+import { ReportSheet } from '@/components/profile';
+import TabTip from '@/components/TabTip';
 import { useAuth } from '@/lib/auth';
 import { supabase, friendlyError } from '@/lib/supabase';
 import { PTS, type TierId } from '@/lib/constants';
@@ -31,6 +34,9 @@ export default function Matches() {
   const me = session?.user.id;
   const [rows, setRows] = useState<MatchRow[] | null>(null);
   const [error, setError] = useState('');
+  const [menu, setMenu] = useState<MatchRow | null>(null);
+  const [reporting, setReporting] = useState<MatchRow | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     const { data, error: e } = await supabase.rpc('get_matches');
@@ -49,7 +55,44 @@ export default function Matches() {
     return () => { supabase.removeChannel(ch); };
   }, [load]);
 
-  if (rows === null && !error) return <Screen><Loading /></Screen>;
+  if (rows === null && !error) {
+    return (
+      <Screen>
+        <View style={{ padding: 20, gap: 16 }}>
+          <Skeleton height={34} width="45%" />
+          <Skeleton height={70} radius={18} />
+          {Array.from({ length: 5 }).map((_, i) => (
+            <View key={i} style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
+              <Skeleton height={52} width={52} radius={26} />
+              <View style={{ flex: 1, gap: 8 }}><Skeleton height={14} width="40%" /><Skeleton height={12} width="75%" /></View>
+            </View>
+          ))}
+        </View>
+      </Screen>
+    );
+  }
+
+  const openMenu = (r: MatchRow) => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {}); setMenu(r); };
+  const unmatch = (r: MatchRow) => {
+    setMenu(null);
+    Alert.alert(`Unmatch ${r.name}?`, r.last_body ? 'This removes the conversation for both of you.' : `You haven’t messaged them, so unmatching counts as ghosting (${PTS.ghost}).`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Unmatch', style: 'destructive', onPress: async () => {
+        const { error: e } = await supabase.rpc('unmatch', { p_match: r.match_id });
+        if (e) Alert.alert("Couldn't unmatch", friendlyError(e)); else load();
+      } },
+    ]);
+  };
+  const block = (r: MatchRow) => {
+    setMenu(null);
+    Alert.alert(`Block ${r.name}?`, "You won't see each other anywhere on Swirl. They won't be told.", [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Block', style: 'destructive', onPress: async () => {
+        const { error: e } = await supabase.rpc('block_user', { p_target: r.other_id });
+        if (e) Alert.alert("Couldn't block", friendlyError(e)); else load();
+      } },
+    ]);
+  };
 
   const fresh = (rows ?? []).filter((r) => !r.last_body);
   const convos = (rows ?? []).filter((r) => r.last_body);
@@ -81,13 +124,14 @@ export default function Matches() {
         ) : (
           <FlatList
             data={convos}
+            refreshControl={<RefreshControl refreshing={refreshing} tintColor={C.pink} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}
             keyExtractor={(r) => r.match_id}
             ListHeaderComponent={fresh.length ? (
               <View style={{ marginBottom: 12 }}>
                 <Text style={styles.section}>New matches</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 16, paddingHorizontal: 20 }}>
                   {fresh.map((r) => (
-                    <Pressable key={r.match_id} onPress={() => router.push(`/chat/${r.match_id}`)} style={{ alignItems: 'center', width: 66 }}>
+                    <Pressable key={r.match_id} onPress={() => router.push(`/chat/${r.match_id}`)} onLongPress={() => openMenu(r)} style={{ alignItems: 'center', width: 66 }}>
                       <View style={{ padding: 2, borderRadius: 40, borderWidth: 2, borderColor: C.pink }}><Avatar uri={r.photo} name={r.name} size={58} /></View>
                       <Text style={styles.freshName} numberOfLines={1}>{r.name}</Text>
                     </Pressable>
@@ -101,7 +145,8 @@ export default function Matches() {
               const yourTurn = r.last_sender && r.last_sender !== me;
               const unread = (r.unread ?? 0) > 0;
               return (
-                <Pressable onPress={() => router.push(`/chat/${r.match_id}`)} style={styles.row}>
+                <Pressable onPress={() => router.push(`/chat/${r.match_id}`)} onLongPress={() => openMenu(r)} style={styles.row}
+                  accessibilityHint="Hold for more options">
                   <Avatar uri={r.photo} name={r.name} size={52} />
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
@@ -123,6 +168,26 @@ export default function Matches() {
             }}
           />
         )}
+
+      {!!rows?.length && (
+        <TabTip id="matches" title="Make the first move"
+          body={`Message within 24 hours of matching for +${PTS.reply}. Hold a chat for more options like unmatch or report.`}
+          style={{ position: 'absolute', left: 16, right: 16, bottom: 16 }} />
+      )}
+
+      <Sheet visible={!!menu} onClose={() => setMenu(null)} title={menu?.name}>
+        {menu && (
+          <View style={{ paddingBottom: 8 }}>
+            <MenuRow icon={<MessageCircle size={18} color={C.text} />} label="Open chat" onPress={() => { const m = menu; setMenu(null); router.push(`/chat/${m.match_id}`); }} />
+            <MenuRow icon={<User size={18} color={C.text} />} label="View profile" onPress={() => { const m = menu; setMenu(null); router.push(`/person/${m.other_id}`); }} />
+            <MenuRow icon={<HeartCrack size={18} color={C.text} />} label="Unmatch" onPress={() => unmatch(menu)} />
+            <MenuRow icon={<Flag size={18} color={C.down} />} label="Report" danger onPress={() => { const m = menu; setMenu(null); setReporting(m); }} />
+            <MenuRow icon={<Ban size={18} color={C.down} />} label="Block" danger onPress={() => block(menu)} />
+          </View>
+        )}
+      </Sheet>
+      <ReportSheet target={reporting ? { id: reporting.other_id, name: reporting.name } : null} visible={!!reporting}
+        onClose={() => setReporting(null)} onDone={() => { setReporting(null); load(); }} />
     </Screen>
   );
 }
