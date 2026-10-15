@@ -57,8 +57,6 @@ function RootStack() {
   if (signedIn && profile?.banned) return <Suspended />;
   const stack = (
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: C.bg } }}>
-      <Stack.Screen name="legal/[doc]" />
-      <Stack.Screen name="i/[code]" />
       <Stack.Protected guard={!signedIn}>
         <Stack.Screen name="index" />
         <Stack.Screen name="sign-in" />
@@ -80,6 +78,9 @@ function RootStack() {
         <Stack.Screen name="help" />
         <Stack.Screen name="how" />
       </Stack.Protected>
+      {/* Open to everyone. Keep these last: when a screen is off-limits, the app falls back to the first allowed one. */}
+      <Stack.Screen name="legal/[doc]" />
+      <Stack.Screen name="i/[code]" />
     </Stack>
   );
   return signedIn ? <ExtrasProvider>{stack}</ExtrasProvider> : stack;
