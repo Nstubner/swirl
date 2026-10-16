@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { router, useFocusEffect } from 'expo-router';
-import { Ban, ChevronRight, Flag, Heart, HeartCrack, Lock, MessageCircle, User } from 'lucide-react-native';
+import { Ban, ChevronRight, Flag, Heart, HeartCrack, Lock, MessageCircle, User, Users } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useExtras } from '@/lib/extras';
 import { Avatar, Button, EmptyState, MenuRow, Screen, Sheet, Skeleton } from '@/components/ui';
@@ -117,6 +117,17 @@ export default function Matches() {
           </LinearGradient>
         </Pressable>
       )}
+      <Pressable onPress={() => router.push('/duos')} style={styles.duoRow} accessibilityRole="button">
+        <View style={styles.duoIcon}><Users size={18} color={C.pink} /></View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontFamily: F.bold, fontSize: 15, color: C.text }}>Double dates</Text>
+          <Text style={{ fontFamily: F.body, fontSize: 12, color: C.muted }}>
+            {extras?.duo_requests ? `${extras.duo_requests} waiting on you` : extras?.active_duos ? 'Your duos and group chats' : 'Grab a friend and match with another pair'}
+          </Text>
+        </View>
+        {!!extras?.duo_requests && <View style={styles.badge}><Text style={{ fontFamily: F.bold, fontSize: 11, color: '#fff' }}>{extras.duo_requests}</Text></View>}
+        <ChevronRight size={18} color={C.muted} />
+      </Pressable>
       {error ? <EmptyState title="Couldn't load matches" body={error} action={<Button label="Try again" onPress={load} />} /> :
         !rows?.length ? (
           <EmptyState icon={<Heart size={28} color={C.text} />} title="No matches yet" body="When you and someone both swipe right, they show up here."
@@ -147,7 +158,9 @@ export default function Matches() {
               return (
                 <Pressable onPress={() => router.push(`/chat/${r.match_id}`)} onLongPress={() => openMenu(r)} style={styles.row}
                   accessibilityHint="Hold for more options">
-                  <Avatar uri={r.photo} name={r.name} size={52} />
+                  <Pressable onPress={() => router.push(`/person/${r.other_id}`)} hitSlop={4} accessibilityLabel={`See ${r.name}'s profile`}>
+                    <Avatar uri={r.photo} name={r.name} size={52} />
+                  </Pressable>
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -193,6 +206,9 @@ export default function Matches() {
 }
 
 const styles = StyleSheet.create({
+  duoRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: 16, marginBottom: 12, padding: 12, borderRadius: 18, backgroundColor: C.surface, borderWidth: 1, borderColor: C.line },
+  duoIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,61,139,0.14)', alignItems: 'center', justifyContent: 'center' },
+  badge: { minWidth: 22, height: 22, borderRadius: 11, backgroundColor: C.pink, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   likesCard: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 18, padding: 14 },
   likesIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
   section: { fontFamily: F.bold, fontSize: 13, color: C.muted, paddingHorizontal: 20, marginBottom: 8 },

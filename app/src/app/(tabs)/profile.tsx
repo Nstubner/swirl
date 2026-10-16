@@ -4,7 +4,7 @@ import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text,
 import { router, useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Defs, Path, Stop, LinearGradient as SvgGradient } from 'react-native-svg';
-import { BadgeCheck, BarChart3, Bell, Calculator, ChevronRight, Eye, FileText, Gift, LifeBuoy, LogOut, Pause, Pencil, Share2, ShieldCheck, Trash2, Trophy } from 'lucide-react-native';
+import { BadgeCheck, BarChart3, Bell, Calculator, ChevronRight, Eye, FileText, Gift, LifeBuoy, LogOut, Users, Pause, Pencil, Share2, ShieldCheck, Trash2, Trophy } from 'lucide-react-native';
 import { Avatar, Badges, Button, Chip, Loading, MenuRow, Screen, Sheet, TierBadge, VerifiedCheck } from '@/components/ui';
 import { ShareSheet, type Recap, type ShareContent } from '@/components/ShareCard';
 import { Explain, InfoButton } from '@/lib/explain';
@@ -315,6 +315,7 @@ export default function ProfileTab() {
             <MenuRow icon={<BarChart3 size={18} color={C.pink} />} label="Admin dashboard" sub="Signups, activity, reports, rewards" onPress={() => router.push('/admin')} />
           )}
           <MenuRow icon={<Pencil size={18} color={C.text} />} label="Edit profile" sub="Photos, prompts, interests, campus" onPress={() => router.push('/edit')} />
+          <MenuRow icon={<Users size={18} color={C.text} />} label={extras?.duo_requests ? `Duos · ${extras.duo_requests} waiting` : 'Duos'} sub="Team up with a friend for double dates" onPress={() => router.push('/duos')} />
           <MenuRow icon={<Gift size={18} color={C.text} />} label="Invite friends" sub="Earn Super Likes, a Boost, badges and a hoodie" onPress={() => router.push('/invite')} />
           <MenuRow icon={<Calculator size={18} color={C.text} />} label="How Swirl works" sub="Who you see, your score, teams, seasons" onPress={() => router.push('/how')} />
           <MenuRow icon={<ShieldCheck size={18} color={C.text} />} label="Safety tips" onPress={() => setSafety(true)} />

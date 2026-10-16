@@ -7,7 +7,7 @@ import { C, F } from '@/lib/theme';
 
 export default function TabsLayout() {
   const { extras } = useExtras();
-  const unread = extras?.unread_chats ?? 0;
+  const unread = (extras?.unread_chats ?? 0) + (extras?.duo_requests ?? 0);
   return (
     <>
     <Intro />

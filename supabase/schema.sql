@@ -489,8 +489,11 @@ create or replace function public.after_profile_update() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   if new.onboarded and not old.onboarded and new.referred_by is not null and not new.referral_credited then
-    update profiles set referral_credited = true where id = new.id;
+    -- The friend who joined gets a 24-hour Boost so their first day is busy.
+    update profiles set referral_credited = true, boost_until = greatest(coalesce(boost_until, now()), now()) + interval '24 hours' where id = new.id;
     perform credit_invite(new.referred_by);
+    perform send_push(new.referred_by, coalesce(new.name, 'Your friend') || ' joined Swirl 🎉',
+                      'You earned 2 Super Likes. Make them your duo for double dates?', '/duos');
   end if;
   return null;
 end $$;
@@ -640,6 +643,330 @@ language sql volatile security definer set search_path = public as $$
   limit p_limit
 $$;
 
+-- ---------- Duos (2-on-2 double dates) ----------------------------------------
+--
+-- You and a friend form a duo (up to 3 duos each). Your duo swipes on other duos.
+-- A like only counts once both of you say yes. When two duos like each other,
+-- all four land in one group chat. A confirmed double date is +30 each.
+
+create table if not exists public.duos (
+  id          uuid primary key default gen_random_uuid(),
+  user_a      uuid not null references public.profiles(id) on delete cascade,
+  user_b      uuid not null references public.profiles(id) on delete cascade,
+  invited_by  uuid not null references public.profiles(id) on delete cascade,
+  status      text not null default 'pending' check (status in ('pending','active')),
+  created_at  timestamptz not null default now(),
+  accepted_at timestamptz,
+  check (user_a < user_b),
+  unique (user_a, user_b)
+);
+create index if not exists duos_b on public.duos (user_b);
+
+create table if not exists public.duo_votes (
+  from_duo   uuid not null references public.duos(id) on delete cascade,
+  to_duo     uuid not null references public.duos(id) on delete cascade,
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  vote       text not null check (vote in ('like','pass')),
+  created_at timestamptz not null default now(),
+  primary key (from_duo, to_duo, user_id)
+);
+create index if not exists duo_votes_to on public.duo_votes (to_duo);
+
+create table if not exists public.duo_matches (
+  id              uuid primary key default gen_random_uuid(),
+  duo_a           uuid references public.duos(id) on delete set null,
+  duo_b           uuid references public.duos(id) on delete set null,
+  members         uuid[] not null,
+  confirms        uuid[] not null default '{}',
+  date_paid       boolean not null default false,
+  created_at      timestamptz not null default now(),
+  last_message_at timestamptz
+);
+create index if not exists duo_matches_members on public.duo_matches using gin (members);
+
+create table if not exists public.duo_messages (
+  id         bigserial primary key,
+  match_id   uuid not null references public.duo_matches(id) on delete cascade,
+  sender_id  uuid not null references public.profiles(id) on delete cascade,
+  body       text not null check (char_length(body) between 1 and 1000),
+  created_at timestamptz not null default now()
+);
+create index if not exists duo_messages_match_time on public.duo_messages (match_id, created_at);
+
+alter table public.duos         enable row level security;
+alter table public.duo_votes    enable row level security;   -- server functions only
+alter table public.duo_matches  enable row level security;
+alter table public.duo_messages enable row level security;
+drop policy if exists "read my duos" on public.duos;
+create policy "read my duos" on public.duos for select to authenticated using (auth.uid() in (user_a, user_b));
+drop policy if exists "read my duo matches" on public.duo_matches;
+create policy "read my duo matches" on public.duo_matches for select to authenticated using (auth.uid() = any(members));
+drop policy if exists "read my duo messages" on public.duo_messages;
+create policy "read my duo messages" on public.duo_messages for select to authenticated
+  using (exists (select 1 from duo_matches m where m.id = match_id and auth.uid() = any(m.members)));
+drop policy if exists "send my duo messages" on public.duo_messages;
+create policy "send my duo messages" on public.duo_messages for insert to authenticated
+  with check (sender_id = auth.uid() and exists (select 1 from duo_matches m where m.id = match_id and auth.uid() = any(m.members)));
+
+-- Would a want to see b (by "Show me")?
+create or replace function public.wants(a uuid, b uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select x.show_me = 'everyone' or (x.show_me = 'women' and y.gender = 'woman') or (x.show_me = 'men' and y.gender = 'man')
+                   from profiles x, profiles y where x.id = a and y.id = b), false)
+$$;
+
+create or replace function public.duo_partner(p_duo uuid, p_me uuid) returns uuid
+language sql stable security definer set search_path = public as $$
+  select case when user_a = p_me then user_b when user_b = p_me then user_a end from duos where id = p_duo
+$$;
+
+-- Compact profile for duo cards (same fields Discover uses).
+create or replace function public.person_card(p_id uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'id', p.id, 'name', p.name, 'age', date_part('year', age(p.birthday))::int, 'gender', p.gender, 'pronouns', p.pronouns,
+    'major', p.major, 'grad_year', p.grad_year, 'bio', p.bio, 'prompts', p.prompts, 'interests', p.interests,
+    'classes', p.classes, 'dorm', p.dorm, 'spots', p.spots, 'photos', p.photos,
+    'tier', case when p.visibility = 'hidden' then null else tier_for(coalesce(s.score, 1000)) end,
+    'badges', p.badges, 'captions', p.captions, 'looking_for', p.looking_for, 'greek', p.greek, 'verified', p.verified,
+    'photo_locations', p.photo_locations, 'fav_spot', p.fav_spot, 'fav_order', p.fav_order)
+  from profiles p left join scores s on s.user_id = p.id where p.id = p_id
+$$;
+
+-- Your duos (active and pending), newest first.
+create or replace function public.get_my_duos()
+returns table (duo_id uuid, partner_id uuid, partner_name text, partner_photo text, status text, invited_by_me boolean, created_at timestamptz)
+language sql stable security definer set search_path = public as $$
+  select d.id, o.id, o.name, o.photos[1], d.status, d.invited_by = auth.uid(), d.created_at
+  from duos d join profiles o on o.id = case when d.user_a = auth.uid() then d.user_b else d.user_a end
+  where auth.uid() in (d.user_a, d.user_b) and not o.banned
+  order by (d.status = 'pending' and d.invited_by <> auth.uid()) desc, d.created_at desc
+$$;
+
+-- Friends you invited (or who invited you) that you could duo with.
+create or replace function public.get_duo_suggestions()
+returns table (id uuid, name text, photo text)
+language sql stable security definer set search_path = public as $$
+  select p.id, p.name, p.photos[1] from profiles p, profiles me
+  where me.id = auth.uid() and p.id <> me.id and p.onboarded and not p.banned and not is_blocked(me.id, p.id)
+    and (p.referred_by = me.id or me.referred_by = p.id)
+    and not exists (select 1 from duos d where d.user_a = least(me.id, p.id) and d.user_b = greatest(me.id, p.id))
+  order by p.created_at desc limit 20
+$$;
+
+-- Ask a friend to be your duo, by their invite code or from your suggestions.
+create or replace function public.duo_invite(p_user uuid default null, p_code text default null) returns json
+language plpgsql security definer set search_path = public as $$
+declare me uuid := auth.uid(); f profiles; my_name text; d duos;
+begin
+  if me is null then raise exception 'Not signed in'; end if;
+  if p_user is not null then select * into f from profiles where id = p_user;
+  else select * into f from profiles where invite_code = upper(trim(coalesce(p_code, ''))); end if;
+  if f.id is null or not f.onboarded or f.banned then return json_build_object('ok', false, 'error', 'No one on Swirl has that code.'); end if;
+  if f.id = me then return json_build_object('ok', false, 'error', 'That’s your own code.'); end if;
+  if is_blocked(me, f.id) then return json_build_object('ok', false, 'error', 'You can’t duo with this person.'); end if;
+  select * into d from duos where user_a = least(me, f.id) and user_b = greatest(me, f.id);
+  if d.id is not null then
+    if d.status = 'pending' and d.invited_by = f.id then
+      update duos set status = 'active', accepted_at = now() where id = d.id;
+      return json_build_object('ok', true, 'name', f.name, 'status', 'active');
+    end if;
+    return json_build_object('ok', true, 'name', f.name, 'status', d.status);
+  end if;
+  if (select count(*) from duos where me in (user_a, user_b)) >= 3 then
+    return json_build_object('ok', false, 'error', 'You can have up to 3 duos. Leave one to add another.');
+  end if;
+  if (select count(*) from duos where f.id in (user_a, user_b)) >= 3 then
+    return json_build_object('ok', false, 'error', f.name || ' already has 3 duos.');
+  end if;
+  insert into duos (user_a, user_b, invited_by) values (least(me, f.id), greatest(me, f.id), me);
+  select name into my_name from profiles where id = me;
+  perform send_push(f.id, 'Duo request', coalesce(my_name, 'A friend') || ' wants to be your duo for double dates.', '/duos');
+  return json_build_object('ok', true, 'name', f.name, 'status', 'pending');
+end $$;
+
+create or replace function public.duo_respond(p_duo uuid, p_accept boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare d duos; my_name text;
+begin
+  select * into d from duos where id = p_duo and auth.uid() in (user_a, user_b) and status = 'pending' and invited_by <> auth.uid();
+  if d.id is null then raise exception 'That duo request is gone'; end if;
+  if p_accept then
+    update duos set status = 'active', accepted_at = now() where id = d.id;
+    select name into my_name from profiles where id = auth.uid();
+    perform send_push(d.invited_by, 'You have a duo', coalesce(my_name, 'Your friend') || ' said yes. Go find a double date.', '/discover');
+  else
+    delete from duos where id = d.id;
+  end if;
+end $$;
+
+-- Leave a duo (or cancel a request). Group chats you already have stay.
+create or replace function public.duo_leave(p_duo uuid) returns void
+language sql security definer set search_path = public as $$
+  delete from duos where id = p_duo and auth.uid() in (user_a, user_b)
+$$;
+
+-- Duos your duo can see: both of them fit what both of you want (and the other way around),
+-- nobody is blocked, you haven't voted on them, and nobody you've passed on (in any duo) is in it.
+-- Each person shows up in at most one card.
+create or replace function public.get_duo_deck(p_duo uuid, p_limit int default 20)
+returns table (duo_id uuid, a jsonb, b jsonb, liked_us boolean)
+language plpgsql volatile security definer set search_path = public as $$
+#variable_conflict use_column
+declare me uuid := auth.uid(); mate uuid; r record; seen uuid[] := '{}'; n int := 0;
+begin
+  mate := duo_partner(p_duo, me);
+  if mate is null or not exists (select 1 from duos where id = p_duo and status = 'active') then raise exception 'Pick an active duo first'; end if;
+  for r in
+    select d.id, d.user_a, d.user_b,
+           (select count(*) from duo_votes v where v.from_duo = d.id and v.to_duo = p_duo and v.vote = 'like') = 2 as liked_us
+    from duos d
+    join profiles pa on pa.id = d.user_a join profiles pb on pb.id = d.user_b
+    where d.status = 'active' and d.id <> p_duo
+      and d.user_a not in (me, mate) and d.user_b not in (me, mate)
+      and pa.onboarded and pb.onboarded and not pa.banned and not pb.banned and not pa.paused and not pb.paused
+      and wants(me, d.user_a) and wants(me, d.user_b) and wants(mate, d.user_a) and wants(mate, d.user_b)
+      and wants(d.user_a, me) and wants(d.user_a, mate) and wants(d.user_b, me) and wants(d.user_b, mate)
+      and not is_blocked(me, d.user_a) and not is_blocked(me, d.user_b) and not is_blocked(mate, d.user_a) and not is_blocked(mate, d.user_b)
+      and not exists (select 1 from duo_votes v where v.from_duo = p_duo and v.to_duo = d.id and (v.user_id = me or v.vote = 'pass'))
+      and not exists (select 1 from duo_matches m where (m.duo_a = p_duo and m.duo_b = d.id) or (m.duo_a = d.id and m.duo_b = p_duo))
+      and not exists (select 1 from duo_votes v join duos fd on fd.id = v.from_duo join duos td on td.id = v.to_duo
+                      where v.vote = 'pass' and me in (fd.user_a, fd.user_b) and (d.user_a in (td.user_a, td.user_b) or d.user_b in (td.user_a, td.user_b)))
+    order by 4 desc, random()
+  loop
+    continue when r.user_a = any(seen) or r.user_b = any(seen);
+    seen := seen || array[r.user_a, r.user_b];
+    duo_id := r.id; a := person_card(r.user_a); b := person_card(r.user_b); liked_us := r.liked_us;
+    return next;
+    n := n + 1;
+    exit when n >= p_limit;
+  end loop;
+end $$;
+
+-- Like or pass on another duo for your duo. A like only goes through when both of you said like.
+create or replace function public.duo_vote(p_duo uuid, p_target uuid, p_vote text) returns json
+language plpgsql security definer set search_path = public as $$
+declare me uuid := auth.uid(); mate uuid; mate_vote text; t duos; mid uuid; my_name text; them_names text; x uuid;
+begin
+  if p_vote not in ('like','pass') then raise exception 'Bad vote'; end if;
+  mate := duo_partner(p_duo, me);
+  if mate is null or not exists (select 1 from duos where id = p_duo and status = 'active') then raise exception 'Pick an active duo first'; end if;
+  select * into t from duos where id = p_target and status = 'active';
+  if t.id is null or p_target = p_duo then raise exception 'That duo isn’t available anymore'; end if;
+  insert into duo_votes (from_duo, to_duo, user_id, vote) values (p_duo, p_target, me, p_vote)
+    on conflict (from_duo, to_duo, user_id) do update set vote = excluded.vote, created_at = now();
+  if p_vote = 'pass' then return json_build_object('matched', false); end if;
+
+  select vote into mate_vote from duo_votes where from_duo = p_duo and to_duo = p_target and user_id = mate;
+  select string_agg(name, ' & ' order by name) into them_names from profiles where id in (t.user_a, t.user_b);
+  if mate_vote is null then
+    select name into my_name from profiles where id = me;
+    perform send_push(mate, 'Double date?', coalesce(my_name, 'Your duo') || ' likes ' || coalesce(them_names, 'a duo') || '. You in?', '/duos');
+    return json_build_object('matched', false, 'waiting', true);
+  elsif mate_vote = 'pass' then
+    return json_build_object('matched', false, 'mate_passed', true);
+  end if;
+
+  -- Both of us like them. Do both of them like us?
+  if (select count(*) from duo_votes where from_duo = p_target and to_duo = p_duo and vote = 'like') = 2 then
+    select id into mid from duo_matches where (duo_a = p_duo and duo_b = p_target) or (duo_a = p_target and duo_b = p_duo);
+    if mid is null then
+      insert into duo_matches (duo_a, duo_b, members) values (p_duo, p_target, array[me, mate, t.user_a, t.user_b]) returning id into mid;
+      foreach x in array array[me, mate, t.user_a, t.user_b] loop
+        perform send_push(x, 'Double date match! 🌀', 'Your duo matched. Say hi in the group chat.', '/duo-chat/' || mid);
+      end loop;
+    end if;
+    return json_build_object('matched', true, 'match_id', mid);
+  end if;
+  return json_build_object('matched', false, 'sent', true);
+end $$;
+
+-- Duos your partner liked that are waiting on your answer.
+create or replace function public.get_duo_pending()
+returns table (duo_id uuid, target_id uuid, partner_name text, a jsonb, b jsonb)
+language sql stable security definer set search_path = public as $$
+  select d.id, v.to_duo, pp.name, person_card(t.user_a), person_card(t.user_b)
+  from duos d
+  join duo_votes v on v.from_duo = d.id and v.vote = 'like' and v.user_id = duo_partner(d.id, auth.uid())
+  join duos t on t.id = v.to_duo and t.status = 'active'
+  join profiles pp on pp.id = v.user_id
+  where d.status = 'active' and auth.uid() in (d.user_a, d.user_b)
+    and not exists (select 1 from duo_votes w where w.from_duo = d.id and w.to_duo = v.to_duo and w.user_id = auth.uid())
+    and not is_blocked(auth.uid(), t.user_a) and not is_blocked(auth.uid(), t.user_b)
+  order by v.created_at desc
+$$;
+
+-- Your double-date group chats.
+create or replace function public.get_duo_matches()
+returns table (match_id uuid, created_at timestamptz, people jsonb, last_body text, last_sender text, last_at timestamptz, date_paid boolean, i_confirmed boolean)
+language sql stable security definer set search_path = public as $$
+  select m.id, m.created_at,
+         (select jsonb_agg(jsonb_build_object('id', p.id, 'name', p.name, 'photo', p.photos[1]) order by p.id = auth.uid(), p.name)
+            from profiles p where p.id = any(m.members)),
+         lm.body, (select name from profiles where id = lm.sender_id), lm.created_at, m.date_paid, auth.uid() = any(m.confirms)
+  from duo_matches m
+  left join lateral (select body, sender_id, created_at from duo_messages x where x.match_id = m.id order by x.created_at desc limit 1) lm on true
+  where auth.uid() = any(m.members)
+  order by coalesce(lm.created_at, m.created_at) desc
+$$;
+
+-- "We went on a double date": once 3 of the 4 confirm, everyone gets +30.
+create or replace function public.duo_confirm_date(p_match uuid) returns json
+language plpgsql security definer set search_path = public as $$
+declare m duo_matches; x uuid; n int;
+begin
+  select * into m from duo_matches where id = p_match and auth.uid() = any(members) for update;
+  if m.id is null then raise exception 'That group chat is gone'; end if;
+  if not auth.uid() = any(m.confirms) then
+    update duo_matches set confirms = confirms || auth.uid() where id = m.id returning * into m;
+  end if;
+  n := cardinality(m.confirms);
+  if n >= 3 and not m.date_paid then
+    update duo_matches set date_paid = true where id = m.id;
+    foreach x in array m.members loop perform apply_score(x, 30, 'date', null); end loop;
+    return json_build_object('count', n, 'paid', true);
+  end if;
+  return json_build_object('count', n, 'paid', m.date_paid);
+end $$;
+
+create or replace function public.check_duo_message() returns trigger
+language plpgsql as $$
+begin
+  perform check_text(new.body);
+  if current_user in ('authenticated', 'anon') then
+    if (select count(*) from duo_messages where sender_id = new.sender_id and created_at > now() - interval '1 minute') >= 20 then
+      raise exception 'You''re sending messages too fast. Wait a moment';
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists duo_messages_before_insert on public.duo_messages;
+create trigger duo_messages_before_insert before insert on public.duo_messages
+  for each row execute function public.check_duo_message();
+
+create or replace function public.on_duo_message() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare m duo_matches; x uuid; sender_name text;
+begin
+  update duo_matches set last_message_at = new.created_at where id = new.match_id returning * into m;
+  select name into sender_name from profiles where id = new.sender_id;
+  foreach x in array m.members loop
+    if x <> new.sender_id then perform send_push(x, coalesce(sender_name, 'Double date'), left(new.body, 120), '/duo-chat/' || m.id); end if;
+  end loop;
+  return new;
+end $$;
+drop trigger if exists duo_messages_after_insert on public.duo_messages;
+create trigger duo_messages_after_insert after insert on public.duo_messages
+  for each row execute function public.on_duo_message();
+
+-- Active duo partners' names, for the "Duo with Jake" chip on profiles.
+create or replace function public.duo_partner_names(p_user uuid) returns text[]
+language sql stable security definer set search_path = public as $$
+  select coalesce(array_agg(o.name order by d.accepted_at), '{}')
+  from duos d join profiles o on o.id = case when d.user_a = p_user then d.user_b else d.user_a end
+  where d.status = 'active' and p_user in (d.user_a, d.user_b) and not o.banned and o.onboarded
+$$;
+
 -- One person's profile (chat headers, "view profile", previewing your own).
 drop function if exists public.get_person(uuid);
 create function public.get_person(p_id uuid)
@@ -647,7 +974,7 @@ returns table (id uuid, name text, age int, gender text, pronouns text, major te
                prompts jsonb, interests text[], classes text[], dorm text, spots text[], photos text[], tier text,
                badges text[], captions text[], looking_for text, greek text, verified boolean,
                liked_me_item text, liked_me_comment text, super_liked_me boolean, i_swiped boolean, liked_me boolean,
-               photo_locations text[], fav_spot text, fav_order text)
+               photo_locations text[], fav_spot text, fav_order text, duo_with text[])
 language sql stable security definer set search_path = public as $$
   select p.id, p.name, date_part('year', age(p.birthday))::int, p.gender, p.pronouns, p.major, p.grad_year, p.bio,
          p.prompts, p.interests, p.classes, p.dorm, p.spots, p.photos,
@@ -655,10 +982,14 @@ language sql stable security definer set search_path = public as $$
          p.badges, p.captions, p.looking_for, p.greek, p.verified,
          x.item, x.comment, coalesce(x.kind = 'super', false),
          exists (select 1 from swipes w where w.swiper_id = auth.uid() and w.target_id = p.id),
-         x.swiper_id is not null, p.photo_locations, p.fav_spot, p.fav_order
+         x.swiper_id is not null, p.photo_locations, p.fav_spot, p.fav_order, duo_partner_names(p.id)
   from profiles p left join scores s on s.user_id = p.id
   left join swipes x on x.swiper_id = p.id and x.target_id = auth.uid() and x.kind in ('like','super')
-  where p.id = p_id and (p.id = auth.uid() or (p.onboarded and not p.banned and not is_blocked(auth.uid(), p.id)))
+  where p.id = p_id and (p.id = auth.uid() or is_admin() or (p.onboarded and not p.banned and not is_blocked(auth.uid(), p.id)
+    -- Paused people only open for people they've matched or double-dated with.
+    and (not p.paused
+         or exists (select 1 from matches m where (m.user_a = p.id and m.user_b = auth.uid()) or (m.user_b = p.id and m.user_a = auth.uid()))
+         or exists (select 1 from duo_matches dm where p.id = any(dm.members) and auth.uid() = any(dm.members)))))
 $$;
 
 -- ---------- Swiping + scoring -------------------------------------------------
@@ -866,8 +1197,9 @@ begin
   if inv.id = me.id then return json_build_object('ok', false, 'error', 'That’s your own code.'); end if;
   update profiles set referred_by = inv.id, bonus_supers = bonus_supers + 1 where id = me.id;
   if me.onboarded then
-    update profiles set referral_credited = true where id = me.id;
+    update profiles set referral_credited = true, boost_until = greatest(coalesce(boost_until, now()), now()) + interval '24 hours' where id = me.id;
     perform credit_invite(inv.id);
+    perform send_push(inv.id, coalesce(me.name, 'Your friend') || ' used your code 🎉', 'You earned 2 Super Likes. Make them your duo for double dates?', '/duos');
   end if;
   return json_build_object('ok', true, 'name', inv.name);
 end $$;
@@ -965,6 +1297,11 @@ language sql stable security definer set search_path = public as $$
                       and exists (select 1 from profiles q where q.id = x.swiper_id and q.onboarded and not q.banned)
                       and not is_blocked(p.id, x.swiper_id))::int,
     'likes_unlocked', likes_unlocked(p.id),
+    'duo_requests', (select count(*) from duos d where p.id in (d.user_a, d.user_b) and d.status = 'pending' and d.invited_by <> p.id)
+                  + (select count(*) from duos d join duo_votes v on v.from_duo = d.id and v.vote = 'like' and v.user_id <> p.id
+                     where d.status = 'active' and p.id in (d.user_a, d.user_b)
+                       and not exists (select 1 from duo_votes w where w.from_duo = d.id and w.to_duo = v.to_duo and w.user_id = p.id)),
+    'active_duos', (select count(*) from duos d where p.id in (d.user_a, d.user_b) and d.status = 'active'),
     'unread_chats', (select count(*) from matches m
                      where p.id in (m.user_a, m.user_b)
                        and exists (select 1 from messages x where x.match_id = m.id and x.sender_id <> p.id
@@ -1261,6 +1598,9 @@ begin
     'like_comments', (select count(*) from swipes where comment is not null),
     'errors_today', (select count(*) from app_errors where created_at >= day_start(t)),
     'feedback_new', (select count(*) from feedback where status = 'new'),
+    'duos_active', (select count(*) from duos where status = 'active'),
+    'duo_matches', (select count(*) from duo_matches),
+    'duo_dates',   (select count(*) from duo_matches where date_paid),
     'season',     (select json_build_object('id', id, 'name', name, 'started_at', started_at) from seasons where ended_at is null order by id desc limit 1),
     'events',     (select coalesce(json_agg(json_build_object('id', id, 'name', name, 'description', description, 'multiplier', multiplier,
                                                               'starts_at', starts_at, 'ends_at', ends_at) order by starts_at), '[]')
@@ -1548,6 +1888,9 @@ exception when duplicate_object then null; end $$;
 do $$ begin
   alter publication supabase_realtime add table public.matches;
 exception when duplicate_object then null; end $$;
+do $$ begin
+  alter publication supabase_realtime add table public.duo_messages;
+exception when duplicate_object then null; end $$;
 -- Live "+8 · someone liked your photo" pop-ups. Each person only receives their own rows (row-level security).
 alter table public.score_feed enable row level security;
 drop policy if exists "read own score feed" on public.score_feed;
@@ -1590,7 +1933,10 @@ grant execute on function
   public.admin_teams(), public.admin_hide_team(text, text, boolean),
   public.mark_read(uuid), public.log_error(text, text, text, text, text), public.admin_errors(int),
   public.send_feedback(text, text), public.admin_feedback(int), public.admin_feedback_done(bigint, boolean),
-  public.admin_season_winners(), public.admin_team_prize(int, text, text, boolean)
+  public.admin_season_winners(), public.admin_team_prize(int, text, text, boolean),
+  public.get_my_duos(), public.get_duo_suggestions(), public.duo_invite(uuid, text), public.duo_respond(uuid, boolean),
+  public.duo_leave(uuid), public.get_duo_deck(uuid, int), public.duo_vote(uuid, uuid, text), public.get_duo_pending(),
+  public.get_duo_matches(), public.duo_confirm_date(uuid)
   to authenticated;
 revoke execute on function public.award_season(int) from public, anon, authenticated;
 revoke execute on function public.apply_score(uuid, int, text, uuid) from public, anon, authenticated;

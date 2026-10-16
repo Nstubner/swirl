@@ -79,7 +79,7 @@ type Stats = {
   referred: number; top_inviters: { name: string | null; email: string; invites: number }[];
   reports_open: number; claims_open: number;
   verifications_pending: number; verified: number; push_users: number; looking_for: Record<string, number>; like_comments: number;
-  errors_today?: number; feedback_new?: number;
+  errors_today?: number; feedback_new?: number; duos_active?: number; duo_matches?: number; duo_dates?: number;
 };
 
 export function Overview({ onJump }: { onJump: (tab: 'reports' | 'rewards' | 'verify' | 'support') => void }) {
@@ -193,6 +193,14 @@ export function Overview({ onJump }: { onJump: (tab: 'reports' | 'rewards' | 've
           <Tile label="Dates confirmed" value={fmt(st.dates)} sub={`${pct(st.dates, st.matches)} of matches`} />
           <Tile label="Messages" value={fmt(st.messages)} />
           <Tile label="Likes with a comment" value={fmt(st.like_comments)} sub={`${pct(st.like_comments, st.swipes.like + st.swipes.super)} of likes`} />
+        </View>
+      </Card>
+
+      <Card title="Duos (double dates)">
+        <View style={s.grid}>
+          <Tile label="Active duos" value={fmt(st.duos_active ?? 0)} />
+          <Tile label="Duo matches" value={fmt(st.duo_matches ?? 0)} />
+          <Tile label="Double dates confirmed" value={fmt(st.duo_dates ?? 0)} sub={`${pct(st.duo_dates ?? 0, st.duo_matches ?? 0)} of duo matches`} />
         </View>
       </Card>
 

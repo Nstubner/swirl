@@ -75,6 +75,7 @@ export type DeckPerson = {
   i_swiped?: boolean;
   liked_me?: boolean;
   near_rank?: boolean;
+  duo_with?: string[];
   is_new?: boolean;
   boosted?: boolean;
   photo_locations?: string[];
@@ -314,10 +315,22 @@ export type Extras = {
   likes_count: number;
   likes_unlocked: boolean;
   unread_chats: number;
+  duo_requests?: number;
+  active_duos?: number;
   event: { name: string; description: string | null; multiplier: number; ends_at: string } | null;
   next_event: { name: string; description: string | null; multiplier: number; starts_at: string } | null;
   season: { name: string; started_at: string } | null;
   last_season: { id: number; name: string; rank: number; total: number; score: number; tier: TierId } | null;
+};
+
+/** A duo (you + a friend) for double dates. */
+export type Duo = { duo_id: string; partner_id: string; partner_name: string | null; partner_photo: string | null; status: 'pending' | 'active'; invited_by_me: boolean; created_at: string };
+/** Another duo shown in Duo mode. */
+export type DuoCard = { duo_id: string; a: DeckPerson; b: DeckPerson; liked_us: boolean };
+export type DuoPending = { duo_id: string; target_id: string; partner_name: string; a: DeckPerson; b: DeckPerson };
+export type DuoMatch = {
+  match_id: string; created_at: string; people: { id: string; name: string | null; photo: string | null }[];
+  last_body: string | null; last_sender: string | null; last_at: string | null; date_paid: boolean; i_confirmed: boolean;
 };
 
 /** "Top 12%" style label. */

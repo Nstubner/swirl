@@ -275,6 +275,9 @@ export function ScrollProfile({ person, me, isMe, onLike, onReport, onBlock, hea
         {!!person.pronouns && <InfoChip icon={<Text style={{ color: C.muted }}>·</Text>} text={person.pronouns} />}
         {!!person.dorm && <InfoChip icon={<Home size={15} color={C.muted} />} text={person.dorm} />}
         {!!person.greek && <InfoChip icon={<Users size={15} color={C.muted} />} text={person.greek} />}
+        {!!person.duo_with?.length && (
+          <Explain k="duos"><InfoChip icon={<Users size={15} color={C.pink} />} text={`Duo with ${person.duo_with.join(' & ')}`} /></Explain>
+        )}
       </ScrollView>
 
       {blocks}

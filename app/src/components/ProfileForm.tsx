@@ -385,7 +385,7 @@ export default function ProfileForm({ mode, onDone }: { mode: 'onboarding' | 'ed
               <Label>Got an invite code? (optional)</Label>
               <Input value={invite} onChangeText={(t) => { setInvite(t.toUpperCase()); setInviteDone(false); setError(''); }}
                 placeholder="ABC123" autoCapitalize="characters" maxLength={6} />
-              <Text style={{ fontFamily: F.body, fontSize: 12, color: C.muted, marginTop: 6 }}>Your friend gets credit and you get a bonus Super Like.</Text>
+              <Text style={{ fontFamily: F.body, fontSize: 12, color: C.muted, marginTop: 6 }}>Your friend gets credit, and you get a bonus Super Like plus a free 24-hour Boost when you finish.</Text>
             </View>
           )}
           {mode === 'onboarding' && (

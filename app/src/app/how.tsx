@@ -59,6 +59,10 @@ export default function How() {
           <P>If you both like each other, it’s a match and you can message. A comment on your like becomes the first message. A regular like stays secret until you match.</P>
         </Section>
 
+        <Section icon={<Users size={18} color={C.pink} />} title="Duos (double dates)">
+          <P>Pair up with a friend (up to 3 duos), then switch Discover to Duo and swipe on other pairs together. A like only counts once you both say yes. When two duos like each other, all four of you get a group chat. When 3 of the 4 confirm the double date, everyone gets +{PTS.date}.</P>
+        </Section>
+
         <Section icon={<Trophy size={18} color={C.pink} />} title="Your score">
           <Row k="Someone likes you" v={`+${PTS.like}`} />
           <Row k="Someone Super Likes you" v={`+${PTS.super}`} />

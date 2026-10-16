@@ -38,6 +38,10 @@ To download raw data as a spreadsheet: Supabase → Table Editor → pick a tabl
 delete from auth.users where email like '%@sample.swirl.edu';
 ```
 
+## Duos (double dates)
+
+Two friends pair up (up to 3 duos each) and swipe on other pairs in Discover → Duo. A like only counts once both people in the duo say yes. When two duos like each other, all four get a group chat; when 3 of the 4 confirm the double date, everyone gets +30. The sample data gives every admin a duo with Sam, a sample guy, so you can try it alone.
+
 ## App Store reviewer account
 
 Apple needs a login it can use. Follow the steps at the top of `supabase/reviewer_account.sql` (create `appreview@demo.swirl.edu` with a password in **Authentication → Users → Add user**, tick Auto Confirm, then run the file). Reviewers tap **Have a test account? Sign in with a password** on the sign-in screen.
@@ -94,4 +98,4 @@ Dorms and Greek chapters show once they have 5+ members. Points from your own te
 
 ## Not built yet
 
-Group mode, double dates, daily picks, and automatic photo screening (needs a paid image-moderation service such as Sightengine or AWS Rekognition; for now, reports and admin review cover it). Tappable invite links in texts need a website domain (set `INVITE_URL` in `app/src/lib/constants.ts`); inside the app, `swirl://i/CODE` already fills in the invite code.
+Bigger group mode (3–4 people), daily picks, and automatic photo screening (needs a paid image-moderation service such as Sightengine or AWS Rekognition; for now, reports and admin review cover it). Tappable invite links in texts need a website domain (set `INVITE_URL` in `app/src/lib/constants.ts`); inside the app, `swirl://i/CODE` already fills in the invite code.

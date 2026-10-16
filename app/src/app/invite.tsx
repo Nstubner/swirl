@@ -27,7 +27,7 @@ export default function Invite() {
   const canRedeem = !!extras?.can_redeem;
 
   const share = () => {
-    const msg = `Join me on Swirl, the CU Boulder dating app with a live campus leaderboard. Use my code ${myCode} when you sign up and you get a free Super Like.${INVITE_URL ? ` ${INVITE_URL}${myCode}` : APP_LINK ? ` ${APP_LINK}` : ''}`;
+    const msg = `Join me on Swirl, the CU Boulder dating app with a live campus leaderboard. Use my code ${myCode} when you sign up and get a free 24-hour Boost, plus we can be a duo for double dates.${INVITE_URL ? ` ${INVITE_URL}${myCode}` : APP_LINK ? ` ${APP_LINK}` : ''}`;
     Share.share({ message: msg }).catch(() => {});
   };
 
@@ -38,7 +38,7 @@ export default function Invite() {
     if (error) { setCodeMsg(friendlyError(error)); return; }
     const r = data as { ok: boolean; error?: string; name?: string };
     if (!r.ok) { setCodeMsg(r.error ?? 'That code didn’t work.'); return; }
-    setCodeMsg(`Done! ${r.name ?? 'Your friend'} gets credit, and you got a bonus Super Like.`);
+    setCodeMsg(`Done! ${r.name ?? 'Your friend'} gets credit, and you got a bonus Super Like and a 24-hour Boost.`);
     refreshExtras(); refreshProfile();
   };
 
@@ -120,7 +120,7 @@ export default function Invite() {
         {canRedeem && (
           <View style={styles.box}>
             <Text style={styles.title}>Got a friend’s code?</Text>
-            <Text style={{ fontFamily: F.body, fontSize: 13, color: C.muted, marginTop: 4 }}>Enter it in your first week. They get credit and you get a bonus Super Like.</Text>
+            <Text style={{ fontFamily: F.body, fontSize: 13, color: C.muted, marginTop: 4 }}>Enter it in your first week. They get credit, and you get a bonus Super Like and a 24-hour Boost.</Text>
             <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
               <Input value={code} onChangeText={(t) => { setCode(t.toUpperCase()); setCodeMsg(''); }} placeholder="ABC123" autoCapitalize="characters" maxLength={6} style={{ flex: 1 }} />
               <Button label="Apply" small onPress={redeem} loading={busy} disabled={code.trim().length < 6} style={{ alignSelf: 'center' }} />

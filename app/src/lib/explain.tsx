@@ -101,6 +101,21 @@ const ENTRIES: Record<string, (ctx: Ctx) => Entry> = {
       'Use the filter button to narrow by year, what people are looking for, or verified only.',
     ],
   }),
+  duos: () => ({
+    title: 'Duos (double dates)',
+    summary: 'Team up with a friend and match with another pair. Easier and less awkward than a first date alone.',
+    rows: [
+      ['1. Make a duo', 'ask a friend in Duos (up to 3 duos)'],
+      ['2. Swipe together', 'Discover → Duo shows other duos'],
+      ['3. Both say yes', 'a like counts once you and your duo both like them'],
+      ['4. Group chat', 'when both duos like each other, all 4 get a chat'],
+    ],
+    bullets: [
+      'You only see duos where both people fit who you each want to see.',
+      `Confirm a double date (3 of 4) and everyone gets +${PTS.date}.`,
+      'Report or block works the same as in regular chats.',
+    ],
+  }),
   why_seeing: (ctx) => ({
     title: `Why you’re seeing ${String(ctx?.name ?? 'them')}`,
     summary: 'Discover mostly shows people near your score, plus a mix of others, so you see people you’re likely to match with.',

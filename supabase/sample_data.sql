@@ -5,6 +5,8 @@
 -- the dorm/Greek boards. Four of them have already liked every admin (with
 -- comments) so you can test "Likes you", liking back and matching.
 -- They are not real accounts: they can't log in or message you back.
+-- It also makes 4 sample duos, and gives every admin a duo with Sam (a sample guy) so you can try
+-- Duo mode on your own: liking Maya & Sofia or Ava & Chloe there makes an instant double-date match.
 --
 -- REMOVE THEM before real users join (one line):
 --   delete from auth.users where email like '%@sample.swirl.edu';
@@ -81,5 +83,42 @@ begin
   join public.profiles p on p.email = x.handle || '@sample.swirl.edu'
   cross join public.admins a
   where p.id <> a.user_id
+  on conflict do nothing;
+
+  -- Sample duos, so Duo mode has pairs to swipe on.
+  insert into public.duos (user_a, user_b, invited_by, status, accepted_at)
+  select least(x.id, y.id), greatest(x.id, y.id), x.id, 'active', now()
+  from (values ('maya', 'sofia'), ('ava', 'chloe'), ('lily', 'emma'), ('jake', 'marcus')) as v(h1, h2)
+  join public.profiles x on x.email = v.h1 || '@sample.swirl.edu'
+  join public.profiles y on y.email = v.h2 || '@sample.swirl.edu'
+  on conflict do nothing;
+
+  -- Every admin gets a ready-made duo with Sam (a sample guy), so you can try Duo mode alone.
+  insert into public.duos (user_a, user_b, invited_by, status, accepted_at)
+  select least(a.user_id, s.id), greatest(a.user_id, s.id), s.id, 'active', now()
+  from public.admins a join public.profiles s on s.email = 'sam@sample.swirl.edu'
+  where a.user_id <> s.id
+  on conflict do nothing;
+
+  -- Sam already likes the sample girls' duos, and Maya & Sofia and Ava & Chloe already like your duo,
+  -- so liking them in Duo mode makes an instant double-date match.
+  insert into public.duo_votes (from_duo, to_duo, user_id, vote)
+  select ad.id, wd.id, sam.id, 'like'
+  from public.profiles sam
+  join public.duos ad on sam.id in (ad.user_a, ad.user_b)
+  join public.admins a on a.user_id in (ad.user_a, ad.user_b)
+  join public.duos wd on wd.user_a in (select id from public.profiles where email like '%@sample.swirl.edu' and gender = 'woman')
+                     and wd.user_b in (select id from public.profiles where email like '%@sample.swirl.edu' and gender = 'woman')
+  where sam.email = 'sam@sample.swirl.edu'
+  on conflict do nothing;
+
+  insert into public.duo_votes (from_duo, to_duo, user_id, vote)
+  select wd.id, ad.id, w.id, 'like'
+  from public.duos ad
+  join public.admins a on a.user_id in (ad.user_a, ad.user_b)
+  join public.profiles sam on sam.email = 'sam@sample.swirl.edu' and sam.id in (ad.user_a, ad.user_b)
+  join public.duos wd on true
+  join public.profiles w on w.id in (wd.user_a, wd.user_b)
+  where exists (select 1 from public.profiles m where m.id in (wd.user_a, wd.user_b) and m.email in ('maya@sample.swirl.edu', 'ava@sample.swirl.edu'))
   on conflict do nothing;
 end $$;

@@ -77,6 +77,8 @@ function RootStack() {
         <Stack.Screen name="verify-photo" />
         <Stack.Screen name="help" />
         <Stack.Screen name="how" />
+        <Stack.Screen name="duos" />
+        <Stack.Screen name="duo-chat/[id]" />
       </Stack.Protected>
       {/* Open to everyone. Keep these last: when a screen is off-limits, the app falls back to the first allowed one. */}
       <Stack.Screen name="legal/[doc]" />

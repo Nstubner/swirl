@@ -6,7 +6,8 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { interpolate, useAnimatedStyle, useReducedMotion, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import { RefreshCw, Rocket, SlidersHorizontal, Sparkles, Star, X } from 'lucide-react-native';
-import { Button, Chip, EmptyState, Label, Screen, Sheet, Skeleton, Wordmark } from '@/components/ui';
+import { Button, Chip, EmptyState, Label, Screen, Segmented, Sheet, Skeleton, Wordmark } from '@/components/ui';
+import DuoDeck from '@/components/DuoDeck';
 import { LikeSheet, MatchScreen, ScrollProfile, type LikeItem } from '@/components/profile';
 import EventBanner from '@/components/EventBanner';
 import TabTip from '@/components/TabTip';
@@ -40,6 +41,7 @@ export default function Discover() {
   const [likeItem, setLikeItem] = useState<LikeItem | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [match, setMatch] = useState<{ id: string; person: DeckPerson } | null>(null);
+  const [mode, setMode] = useState<'solo' | 'duo'>('solo');
   const scrollRef = useRef<ScrollView>(null);
   const tx = useSharedValue(0);
   const fade = useSharedValue(1);
@@ -168,6 +170,15 @@ export default function Discover() {
         <InfoButton k="discover" />
       </View>
       <EventBanner />
+      {!profile?.paused && (
+        <View style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
+          <Segmented value={mode} onChange={setMode} options={[
+            { id: 'solo', label: 'Solo' },
+            { id: 'duo', label: extras?.duo_requests ? `Duo · ${extras.duo_requests}` : 'Duo' },
+          ]} />
+        </View>
+      )}
+      {mode === 'duo' && !profile?.paused ? <DuoDeck /> : <>
       <View style={{ flex: 1 }}>{body}</View>
       {top && !profile?.paused && (
         <View style={styles.actions} pointerEvents="box-none">
@@ -193,6 +204,7 @@ export default function Discover() {
           body="Swipe right to like, left to pass. Double-tap a photo or answer to like that part and add a comment. Hold the Swirl logo anytime for how this works."
           style={styles.tip} />
       )}
+      </>}
 
       <LikeSheet item={likeItem} name={top?.name ?? ''} visible={!!likeItem} supersLeft={supersLeft} busy={busy}
         onClose={() => setLikeItem(null)} onSend={(kind, comment) => decide(kind, likeItem, comment)} />
